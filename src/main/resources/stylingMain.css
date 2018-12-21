@@ -1,0 +1,151 @@
+.root {
+    -fx-background-color: #04293a;
+    -fx-background-size: cover;
+}
+
+.button {
+    -fx-background-color: #04293a;
+    -fx-background-insets: 0, 1, 2, 3;
+    -fx-background-radius: 6, 5;
+    -fx-text-fill: white;
+    -fx-font-size: 13.5px;
+    -fx-font-family: 'Lato';
+    -fx-border-color: #BD8D51;
+    -fx-border-radius: 6, 5;
+    -fx-border-width: 1;
+}
+
+.table-view .column-header,
+.table-view .column-header-background .filler {
+    -fx-background-color: #04293a;
+    -fx-border-color: #BD8D51;
+    -fx-border-width: 0.08;
+}
+
+.table-view .column-header .label {
+    -fx-text-fill: white;
+    -fx-font-size: 12px;
+}
+
+.table-view .cell {
+    -fx-text-fill: #04293a;
+    -fx-font-family: 'Lato';
+    -fx-alignment: CENTER;
+}
+
+.label {
+    -fx-font-family: 'Lato';
+    -fx-color-label-visible: #FFF;
+    -fx-font-size: 12px;
+
+}
+
+.table-view .increment-button, .table-view .decrement-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 2em;
+}
+
+.table-view .scroll-bar:horizontal .track,
+.table-view .scroll-bar:vertical .track {
+    -fx-background-color: transparent;
+    -fx-border-color: #BD8D51;
+    -fx-background-radius: 2em;
+    -fx-border-radius: 2em;
+}
+
+.table-view .scroll-bar:horizontal .thumb,
+.table-view .scroll-bar:vertical .thumb {
+    -fx-background-color: #04293a;
+    -fx-background-insets: 2, 0, 0;
+    -fx-background-radius: 2em;
+}
+
+.progress-bar {
+    -fx-border-radius: 6, 5;
+    -fx-border-width: 1;
+}
+
+.progress-bar .track {
+    -fx-border-color: #04293a;
+}
+
+.radio-button .radio {
+    -fx-border-width: 1px;
+    -fx-border-color: #04293a;
+    -fx-background-color: white;
+    -fx-border-radius: 30px;
+}
+
+.radio-button .dot {
+    -fx-mark-highlight-color: #BD8D51;
+    -fx-mark-color: #BD8D51;
+}
+
+.text-field {
+    -fx-font-family: 'Lato';
+    -fx-border-color: #BD8D51;
+}
+
+.text-input {
+    -fx-text-fill: #728790;
+}
+
+#showBarChartButton.toggle-button {
+    -fx-graphic: url('http://icons.iconarchive.com/icons/double-j-design/diagram-free/16/bar-chart-icon.png');
+    -fx-background-color: #04293a;
+    -fx-border-color: #BD8D51;
+    -fx-background-radius: 6, 5;
+    -fx-border-radius: 6, 5;
+    -fx-pref-height: 29px;
+}
+
+#showLineChartButton.toggle-button {
+    -fx-graphic: url('http://icons.iconarchive.com/icons/fatcow/farm-fresh/16/chart-stock-icon.png');
+    -fx-background-color: #04293a;
+    -fx-border-color: #BD8D51;
+    -fx-background-radius: 6, 5;
+    -fx-border-radius: 6, 5;
+    -fx-pref-height: 29px;
+}
+
+.accordion {
+    -fx-background-color: #04293a;
+}
+
+.data0.chart-bar {
+    -fx-background-color: #04293a;
+}
+
+.data1.chart-bar {
+    -fx-background-color: #BD8D51;
+}
+
+.data2.chart-bar {
+    -fx-background-color: #04293a;
+}
+
+.data3.chart-bar {
+    -fx-background-color: #BD8D51;
+}
+
+.data4.chart-bar {
+    -fx-background-color: #04293a;
+}
+
+.axis-tick-mark,
+.axis-minor-tick-mark,
+.chart-vertical-grid-lines,
+.chart-horizontal-grid-lines,
+.chart-vertical-zero-line,
+.chart-horizontal-zero-line {
+    -fx-stroke: transparent;
+}
+
+.chart {
+    -fx-font-family: "Lato";
+    -fx-font-size: 11pt;
+}
+
+.default-color0.chart-series-line {
+    -fx-stroke: #04293a;
+}
