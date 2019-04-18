@@ -1,8 +1,7 @@
 package de.ixeption.smilefx.training;
 
+import de.ixeption.smilefx.util.PrecisionRecallCurve;
 import de.ixeption.smilefx.util.RocCurve;
-import gnu.trove.map.TObjectDoubleMap;
-import gnu.trove.map.hash.TObjectDoubleHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import smile.classification.Classifier;
@@ -27,7 +26,7 @@ import java.util.function.Consumer;
 public class BalancedCrossValidation {
 
     private static final Logger _log = LoggerFactory.getLogger(BalancedCrossValidation.class);
-
+    private static ForkJoinPool THREAD_POOL;
 
     /**
      * balanced Cross validation of a classification model.
@@ -36,13 +35,13 @@ public class BalancedCrossValidation {
      * @param trainers         classifiers trainer that are properly parameterized.
      * @param x                the test data set.
      * @param y                the test data labels.
-     * @param measures         the performance measures of classification.
-     * @param parallelism      threads to use for computation
+     * @param parallelism      threads for training
+     * @param measures         the performance measures of classification.    *
      * @param progressCallback Callback for progress notification, can be null and is called from ANY thread
-     * @return {@link BalancedCrossValidation.CVresult} the test results as a Map
+     * @return {@link CVResult} the test results as a Map
      */
 
-    public static <T> Map<ClassifierTrainer<T>, CVresult> bcv(int k, T[] x, int[] y, ClassificationMeasure[] measures, int parallelism,
+    public static <T> Map<ClassifierTrainer<T>, CVResult> bcv(int k, T[] x, int[] y, ClassificationMeasure[] measures, int parallelism,
                                                               @Nullable Consumer<Double> progressCallback, boolean resampling, ClassifierTrainer<T>... trainers) {
         if (k < 2) {
             throw new IllegalArgumentException("Invalid k for k-fold cross validation: " + k);
@@ -55,7 +54,7 @@ public class BalancedCrossValidation {
         }
 
         _log.info("{}-fold Cross validation", k);
-        Map<ClassifierTrainer<T>, CVresult> resultMap = new HashMap<>();
+        Map<ClassifierTrainer<T>, CVResult> resultMap = new HashMap<>();
 
         int n = x.length;
         double[][] predictions = new double[trainers.length][n];
@@ -73,12 +72,12 @@ public class BalancedCrossValidation {
                 trainy = Math.slice(y, cv.train[i]);
             }
 
-            ForkJoinPool forkJoinPool = new ForkJoinPool(parallelism);
+            THREAD_POOL = new ForkJoinPool(parallelism);
             for (int j = 0; j < trainers.length; j++) {
                 ClassifierTrainer<T> t = trainers[j];
                 int finalI = i;
                 int finalJ = j;
-                forkJoinPool.execute(() -> {
+                THREAD_POOL.execute(() -> {
                     Classifier<T> classifier = t.train(trainx, trainy);
                     if (classifier instanceof SVM) {
                         ((SVM<T>) classifier).trainPlattScaling(trainx, trainy);
@@ -102,8 +101,8 @@ public class BalancedCrossValidation {
 
             }
             try {
-                forkJoinPool.shutdown();
-                forkJoinPool.awaitTermination(1, TimeUnit.HOURS);
+                THREAD_POOL.shutdown();
+                THREAD_POOL.awaitTermination(1, TimeUnit.HOURS);
             } catch (InterruptedException e) {
                 _log.info("Error", e);
             }
@@ -115,8 +114,9 @@ public class BalancedCrossValidation {
             ClassifierTrainer<T> t = trainers[i];
             final ConfusionMatrix matrix = new ConfusionMatrix(y, predictionClasses);
             final RocCurve roc = new RocCurve(y, predictions[i]);
+            final PrecisionRecallCurve prc = new PrecisionRecallCurve(y, predictions[i]);
 
-            CVresult cVresult = new CVresult(matrix, roc);
+            CVResult cVresult = new CVResult(matrix, roc, prc);
             for (ClassificationMeasure measure : measures) {
                 cVresult.addMeasure(measure.getClass().getSimpleName(), measure.measure(y, predictionClasses));
             }
@@ -125,37 +125,10 @@ public class BalancedCrossValidation {
         return resultMap;
     }
 
-
-    public static class CVresult {
-
-        final TObjectDoubleMap<String> _map = new TObjectDoubleHashMap<>();
-        final ConfusionMatrix _confusionMatrix;
-        final private RocCurve _roc;
-
-
-        private CVresult(ConfusionMatrix confusionMatrix, RocCurve roc) {
-            _confusionMatrix = confusionMatrix;
-            _roc = roc;
-        }
-
-        public void addMeasure(String classificationMeasure, double value) {
-            _map.put(classificationMeasure, value);
-        }
-
-        public ConfusionMatrix getConfusionMatrix() {
-            return _confusionMatrix;
-        }
-
-        public double getMeasure(String measure) {
-            return _map.get(measure);
-        }
-
-        public double[] getPredictions() {
-            return new double[0];
-        }
-
-        public RocCurve getRoc() {
-            return _roc;
+    public static void stopAll() {
+        if (THREAD_POOL != null) {
+            THREAD_POOL.shutdownNow();
         }
     }
+
 }

@@ -3,8 +3,6 @@ package de.ixeption.smilefx.training;
 import smile.classification.ClassifierTrainer;
 import smile.classification.SVM;
 import smile.classification.SoftClassifier;
-import smile.data.Attribute;
-import smile.feature.FeatureTransform;
 import smile.validation.*;
 
 import java.io.Serializable;
@@ -47,26 +45,6 @@ public class SmileModelTrainer<T> implements Serializable {
         map.put("Precision", measures[2]);
         map.put("MatthewsCorrelationCoefficient", measures[3]);
         return map;
-    }
-
-
-    /**
-     * Does not scale anything, just to make the pipeline working without dealing with null
-     */
-    public static class NoScaling extends FeatureTransform implements Serializable {
-
-        private static final long serialVersionUID = -6171397408639275874L;
-
-
-        @Override
-        public void learn(Attribute[] attributes, double[][] data) {
-
-        }
-
-        @Override
-        public double[] transform(double[] x) {
-            return x;
-        }
     }
 
 }

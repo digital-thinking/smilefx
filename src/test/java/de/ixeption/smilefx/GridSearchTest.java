@@ -3,6 +3,7 @@ package de.ixeption.smilefx;
 import de.ixeption.smilefx.features.FeatureExtractor;
 import de.ixeption.smilefx.training.GridSearch;
 import de.ixeption.smilefx.training.TrainedBinarySmileModel;
+import de.ixeption.smilefx.training.TrainingDataSet;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import smile.classification.SoftClassifier;
@@ -17,13 +18,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 public class GridSearchTest {
 
-    private double[][] _x;
-    private int[] _y;
+    private TrainingDataSet<double[]> trainingDataSet;
 
 
     @BeforeEach
     public void generateTrainingData() {
-        _x = new double[][]{{0, 1, 0, 1}, //
+        double[][] x = new double[][]{{0, 1, 0, 1}, //
                 {0, 0, 1, 1}, //
                 {0, 1, 1, 1}, //
                 {1, 1, 1, 1}, //
@@ -44,7 +44,9 @@ public class GridSearchTest {
                 {1, 1, 1, 1}, //
                 {1, 1, 1, 1}, //
         };
-        _y = new int[]{0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1};
+        int[] y = new int[]{0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 1};
+        trainingDataSet = new TrainingDataSet<>(x, y, double[].class);
+
     }
 
     @Test
@@ -79,7 +81,7 @@ public class GridSearchTest {
         };
 
         GridSearch<double[]> gridSearch = new GridSearch<>(EnumSet.allOf(GridSearch.MLModelType.class), 3, double[].class);
-        TrainedBinarySmileModel<double[]> bestModel = gridSearch.findBestModel(_x, _y, new ClassificationMeasure[]{new Accuracy(), new MCCMeasure()},
+        TrainedBinarySmileModel<double[]> bestModel = gridSearch.findBestModel(trainingDataSet, new ClassificationMeasure[]{new Accuracy(), new MCCMeasure()},
                 "MCCMeasure", featureExtractor);
         assertThat(bestModel.getClassifier()).isInstanceOf(SoftClassifier.class);
 

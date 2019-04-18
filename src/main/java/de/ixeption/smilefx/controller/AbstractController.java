@@ -1,14 +1,9 @@
 package de.ixeption.smilefx.controller;
 
 import de.ixeption.smilefx.features.FeatureExtractor;
-import de.ixeption.smilefx.training.GridSearch;
-import de.ixeption.smilefx.training.SmileModelTrainer;
-import de.ixeption.smilefx.training.TrainedBinarySmileModel;
-import de.ixeption.smilefx.training.TrainingDataSet;
-import de.ixeption.smilefx.util.ModelManager;
-import de.ixeption.smilefx.util.PersistenceUtils;
-import de.ixeption.smilefx.util.RocCurve;
-import de.ixeption.smilefx.util.TablesawConverter;
+import de.ixeption.smilefx.features.MultiTransformer;
+import de.ixeption.smilefx.training.*;
+import de.ixeption.smilefx.util.*;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.beans.property.SimpleDoubleProperty;
@@ -18,15 +13,21 @@ import javafx.collections.ObservableList;
 import javafx.event.ActionEvent;
 import javafx.fxml.FXML;
 import javafx.scene.Node;
-import javafx.scene.chart.BarChart;
-import javafx.scene.chart.LineChart;
-import javafx.scene.chart.XYChart;
+import javafx.scene.chart.*;
 import javafx.scene.control.*;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.lang3.tuple.Triple;
+import org.apache.commons.math3.stat.correlation.PearsonsCorrelation;
+import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
+import smile.feature.FeatureTransform;
+import smile.feature.RobustStandardizer;
 import smile.feature.Scaler;
+import smile.math.Histogram;
+import smile.math.Math;
 import smile.math.SparseArray;
 import smile.math.kernel.*;
 import smile.projection.*;
@@ -39,22 +40,22 @@ import tech.tablesaw.io.csv.CsvWriter;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.EnumSet;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.ForkJoinPool;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static java.util.stream.Collectors.joining;
 
 
 public abstract class AbstractController<T, R> {
-
     public TextField samplingFactor;
     public Label fetchResult;
     public Accordion accordion;
     public TextField numThreads;
+    public Pane featureDistribution;
     public CheckBox SVM_Gaussian;
     public CheckBox SVM_Linear;
     public CheckBox SVM_Laplacian;
@@ -68,6 +69,7 @@ public abstract class AbstractController<T, R> {
     public TableColumn<GridSearch.GridSearchResult, String> modelColumn, paramsColumn;
     public TableColumn<GridSearch.GridSearchResult, Double> f1scoreColumn, mccScoreColumn, accuracyColumn, precisionColumn, recallColumn;
     public BarChart<String, Number> classesBarChart;
+    public BarChart<String, Number> corrBarChart;
     public LineChart<Number, Number> rocCurve;
     public TextField limitData;
     public TableView<Triple<String, String, String>> confusionMatrix;
@@ -76,6 +78,7 @@ public abstract class AbstractController<T, R> {
     public TableColumn<Triple<String, String, String>, String> positiveColumn;
     public Button exportButton;
     public CheckBox scaleCheckbox;
+    public CheckBox standardizeCheckbox;
     public CheckBox ppcaCheckBox;
     public CheckBox ghaCheckBox;
     public CheckBox gausskpca;
@@ -87,7 +90,7 @@ public abstract class AbstractController<T, R> {
     public Label currentModelLabel;
     public Button verifyButton;
     public Label noDataLabel;
-    public LineChart<Number, Number> resultROC;
+    public LineChart<Number, Number> finalROC;
     public TableView<Triple<String, String, String>> confusionMatrixVerify;
     public TableColumn<Triple<String, String, String>, String> placeholderColumnVerify;
     public TableColumn<Triple<String, String, String>, String> noConversionColumnVerify;
@@ -96,23 +99,31 @@ public abstract class AbstractController<T, R> {
     public Button sampleAndScaleButton;
     public Label modelInfoLabel;
     public Button updateThreshold;
-    public Pane dataInput;
+    public HBox predictPane;
+    public TableView<Pair<String, FeatureExtractor.FeatureType>> featuresTable;
+    public TableColumn<Pair<String, FeatureExtractor.FeatureType>, String> featureNameColumn, featureTypeColumn;
+    public TableView<Pair<String, Double>> featureImportances;
+    public TableColumn<Pair<String, Double>, String> featureImportancesName;
+    public TableColumn<Pair<String, Double>, Double> featureImportancesValue;
+    public TextField kFolds;
+    public Label extractorInfo;
+    public Label featureInfo;
     ModelManager modelManager = new ModelManager();
     private Stage stage;
-    private double[][] densePCAData;
-    private R[] transformedData;
-    private int[] labels;
     private ObservableList<GridSearch.GridSearchResult> gridSearchResults;
-    private R[] rawData;
-    private ForkJoinPool forkJoinPool = new ForkJoinPool(2);
-    private Scaler scaler;
+    private ForkJoinPool forkJoinPool = new ForkJoinPool(1);
+
+    private FeatureTransform featureTransform;
     private Projection<R> projection;
-    private String smileModel;
+    private String modelPath;
     private double threshold = 0.5;
-    private Node activePoint;
+    private Set<Node> activePoints = new HashSet<>();
     private TrainedBinarySmileModel currentModel;
+    private TrainingDataSet<R> validationData;
+    private TrainingDataSet<R> trainingDataSet;
 
     public void exportToCSV() {
+
         FileChooser fileChooser = new FileChooser();
         fileChooser.setTitle("Save CSV");
         File file = fileChooser.showSaveDialog(stage);
@@ -122,18 +133,19 @@ public abstract class AbstractController<T, R> {
                 List<String> names = new ArrayList<>();
                 List<FeatureExtractor.FeatureType> featureTypes = new ArrayList<>();
                 for (int i = 0; i < Integer.parseInt(pcaDimensions.getText()); i++) {
-                    names.add("Transformed-Dim" + i);
+                    names.add("Projection_" + i);
                     featureTypes.add(FeatureExtractor.FeatureType.Continuous);
                 }
-                vc = TablesawConverter.toTable("VC", names.toArray(new String[0]), featureTypes.toArray(new FeatureExtractor.FeatureType[0]), transformedData);
+                vc = TablesawConverter.toTable("VC", names.toArray(new String[0]), featureTypes.toArray(new FeatureExtractor.FeatureType[0]),
+                        trainingDataSet.getFeatures());
             } else {
-                vc = TablesawConverter.toTable("VC", getFeatureExtractor().getFeatureNames(), getFeatureExtractor().getFeatureTypes(), transformedData);
+                vc = TablesawConverter.toTable("VC", getFeatureExtractor().getFeatureNames(), getFeatureExtractor().getFeatureTypes(),
+                        trainingDataSet.getFeatures());
             }
-            vc.addColumns(BooleanColumn.create("Click", Arrays.stream(labels).mapToObj(i -> i == 1).toArray(Boolean[]::new)));
-            CsvWriter writer = null;
+            vc.addColumns(BooleanColumn.create("Label", Arrays.stream(trainingDataSet.getLabels()).mapToObj(i -> i == 1).toArray(Boolean[]::new)));
+
             try {
-                writer = new CsvWriter(vc, CsvWriteOptions.builder(file).header(true).build());
-                writer.write();
+                new CsvWriter().write(vc, CsvWriteOptions.builder(file).header(true).build());
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -148,17 +160,13 @@ public abstract class AbstractController<T, R> {
         fetchResult.setText("");
 
         forkJoinPool.execute(() -> {
-            TrainingDataSet<R> trainingDataSet = null;
             try {
                 trainingDataSet = getTrainingData(Double.parseDouble(samplingFactor.getText()), Long.parseLong(limitData.getText()),
                         progress -> Platform.runLater(() -> fetchProgress.setProgress(progress)));
-                rawData = trainingDataSet.getFeatures();
-                labels = trainingDataSet.getLabels();
                 Platform.runLater(() -> {
                     fetchProgress.setProgress(1);
                     accordion.getPanes().get(1).setDisable(false);
-                    accordion.getPanes().get(1).setExpanded(true);
-                    fetchResult.setText(String.format("fetched %s datums", rawData.length));
+                    fetchResult.setText(String.format("fetched %s datums", trainingDataSet.getSize()));
                     fetchButton.setDisable(false);
                 });
             } catch (Exception e) {
@@ -174,6 +182,8 @@ public abstract class AbstractController<T, R> {
     public abstract Class<R> getFeatureDataType();
 
     public abstract FeatureExtractor<T, R> getFeatureExtractor();
+
+    public abstract Pane getPredictInput();
 
     public void gridSearch(ActionEvent actionEvent) {
         gridSearchButton.setDisable(true);
@@ -209,21 +219,15 @@ public abstract class AbstractController<T, R> {
         }
 
         forkJoinPool.execute(() -> {
-            if (usePCA() && transformedData == null) {
-                GridSearch<double[]> search = new GridSearch<>(modelTypes, 3, double[].class);
-                final List<GridSearch.GridSearchResult> list = search.gridSearch(modelTypes, densePCAData, labels, getFeatureExtractor().getNumberOfFeatures(),
-                        new ClassificationMeasure[]{new Accuracy(), new Sensitivity(), new Precision(), new MCCMeasure(), new FMeasure()},
-                        Integer.parseInt(numThreads.getText()), d -> Platform.runLater(() -> trainingProgress.setProgress((Double) d)));
-                gridSearchResults = FXCollections.observableArrayList(list);
-            } else {
-                GridSearch<R> search = new GridSearch<>(modelTypes, 3, getFeatureDataType());
-                final List<GridSearch.GridSearchResult> list = search.gridSearch(modelTypes, transformedData, labels, getFeatureExtractor().getNumberOfFeatures(),
-                        new ClassificationMeasure[]{new Accuracy(), new Sensitivity(), new Precision(), new MCCMeasure(), new FMeasure()},
-                        Integer.parseInt(numThreads.getText()), d -> Platform.runLater(() -> trainingProgress.setProgress((Double) d)));
-                gridSearchResults = FXCollections.observableArrayList(list);
-            }
+            GridSearch<R> search = new GridSearch<>(modelTypes, Integer.parseInt(kFolds.getText()), getFeatureDataType());
+            search.printFeatureImportance(trainingDataSet.getLabels(), trainingDataSet.getFeatures(), 20, getFeatureExtractor());
+            final List<GridSearch.GridSearchResult> list = search.gridSearch(modelTypes, trainingDataSet, getFeatureExtractor().getNumberOfFeatures(),
+                    new ClassificationMeasure[]{new Accuracy(), new Sensitivity(), new Precision(), new MCCMeasure(), new FMeasure()},
+                    Integer.parseInt(numThreads.getText()), d -> Platform.runLater(() -> trainingProgress.setProgress((Double) d)));
+            gridSearchResults = FXCollections.observableArrayList(list);
 
             Platform.runLater(() -> {
+                predictPane.setVisible(true);
                 trainingProgress.setProgress(1.0);
                 accordion.getPanes().get(3).setDisable(false);
                 accordion.getPanes().get(3).setExpanded(true);
@@ -238,15 +242,17 @@ public abstract class AbstractController<T, R> {
 
     @FXML
     public void initialize() {
-        final Label label = new Label("Datatype: " + getFeatureDataType().getSimpleName() + " Features: " + getFeatureExtractor().getNumberOfFeatures());
-        label.setStyle("-fx-font-weight: bold");
-        dataInput.getChildren().add(label);
-        dataInput.getChildren().addAll(getDataInput().getChildren());
+        initFeatureTable();
+        extractorInfo.setStyle("-fx-font-weight: bold");
+        extractorInfo.setText("Datatype: " + getFeatureDataType().getSimpleName() + " Features: " + getFeatureExtractor().getNumberOfFeatures());
+        predictPane.getChildren().add(getPredictInput());
         if (getFeatureDataType().equals(SparseArray.class)) {
             ppcaCheckBox.setDisable(true);
             ghaCheckBox.setDisable(true);
             scaleCheckbox.setSelected(false);
             scaleCheckbox.setDisable(true);
+            standardizeCheckbox.setDisable(true);
+            standardizeCheckbox.setSelected(false);
 
             GradientBoostedTree.setDisable(true);
             AdaBoost.setDisable(true);
@@ -255,18 +261,26 @@ public abstract class AbstractController<T, R> {
     }
 
     public void openModel(ActionEvent actionEvent) {
-        resultROC.setVisible(false);
+        predictPane.setVisible(true);
+        finalROC.setVisible(false);
         confusionMatrixVerify.setVisible(false);
         modelInfoLabel.setText("");
         FileChooser fileChooser = new FileChooser();
         File file = fileChooser.showOpenDialog(stage);
         if (file != null) {
-            smileModel = file.getPath();
-            currentModelLabel.setText(file.getPath());
-            if (transformedData != null && labels != null) {
-                verifyButton.setDisable(false);
-
+            modelPath = file.getPath();
+            currentModelLabel.setText(file.getName());
+            try {
+                currentModel = PersistenceUtils.deserialize(Paths.get(modelPath));
+                threshold = currentModel.getThreshold();
+            } catch (IOException | ClassNotFoundException e) {
+                e.printStackTrace();
+                return;
             }
+            if (trainingDataSet.getFeatures() != null && trainingDataSet.getLabels() != null) {
+                verifyButton.setDisable(false);
+            }
+            showImportances((double[]) currentModel.getImportancesIfAvailable().orElseGet(null));
         }
 
     }
@@ -276,55 +290,62 @@ public abstract class AbstractController<T, R> {
         exportButton.setDisable(true);
         sampleAndScaleProgress.setVisible(true);
         forkJoinPool.execute(() -> {
-            if (rawData instanceof double[][]) {
-                if (scaleCheckbox.isSelected()) {
-                    scaler = new Scaler();
-                    scaler.learn((double[][]) rawData);
-                    transformedData = (R[]) scaler.transform((double[][]) rawData);
+
+            trainingDataSet.resetScalerAndProjection();
+            if (scaleCheckbox.isSelected() && !standardizeCheckbox.isSelected()) {
+                featureTransform = new Scaler(true);
+            } else if (!scaleCheckbox.isSelected() && standardizeCheckbox.isSelected()) {
+                featureTransform = new RobustStandardizer(true);
+            } else if (scaleCheckbox.isSelected() && standardizeCheckbox.isSelected()) {
+                featureTransform = new MultiTransformer(new Scaler(true), new RobustStandardizer(true));
+            } else {
+                featureTransform = null;
+            }
+            if (featureTransform != null) {
+                featureTransform.learn((double[][]) trainingDataSet.getRawFeatures());
+                trainingDataSet.scale(featureTransform);
+            }
+            if (usePCA()) {
+                if (trainingDataSet.getType().equals(double[].class)) {
+                    setDenseProjection();
                 } else {
-                    transformedData = rawData;
+                    setSparseProjection();
                 }
-                Platform.runLater(() -> sampleAndScaleProgress.setProgress(0.3));
-                if (linearkpca.isSelected()) {
-                    PCA pca = new PCA((double[][]) transformedData);
-                    pca.setProjection(Integer.parseInt(pcaDimensions.getText()));
-                    projection = (Projection<R>) pca;
-                } else if (ppcaCheckBox.isSelected()) {
-                    projection = (Projection<R>) new PPCA((double[][]) transformedData, Integer.parseInt(pcaDimensions.getText()));
-                } else if (ghaCheckBox.isSelected()) {
-                    projection = (Projection<R>) new GHA(((double[]) transformedData[0]).length, Integer.parseInt(pcaDimensions.getText()), 0.00001);
-                } else if (gausskpca.isSelected()) {
-                    projection = (Projection<R>) new KPCA<>((double[][]) transformedData, new GaussianKernel(0.5), Integer.parseInt(pcaDimensions.getText()));
-                } else if (htangentkpca.isSelected()) {
-                    projection = (Projection<R>) new KPCA<>((double[][]) transformedData, new HyperbolicTangentKernel(), Integer.parseInt(pcaDimensions.getText()));
-                }
-                if (projection != null) {
-                    transformedData = (R[]) projection.project(transformedData);
-                }
-            } else if (rawData instanceof SparseArray[]) {
-                transformedData = rawData;
-                if (linearkpca.isSelected()) {
-                    projection = (Projection<R>) new KPCA<>((SparseArray[]) transformedData, new SparseLinearKernel(), Integer.parseInt(pcaDimensions.getText()));
-                } else if (gausskpca.isSelected()) {
-                    projection = (Projection<R>) new KPCA<>((SparseArray[]) transformedData, new SparseGaussianKernel(0.5), Integer.parseInt(pcaDimensions.getText()));
-                } else if (htangentkpca.isSelected()) {
-                    projection = (Projection<R>) new KPCA<>((SparseArray[]) transformedData, new SparseHyperbolicTangentKernel(),
-                            Integer.parseInt(pcaDimensions.getText()));
-                }
-                if (projection != null) {
-                    densePCAData = projection.project(transformedData);
-                    transformedData = null;
-                }
+                trainingDataSet.project(projection);
+            } else {
+                projection = null;
+            }
+
+            if (trainingDataSet.getType().equals(double[].class)) {
+                double[][] transposed = Math.transpose(trainingDataSet.getFeatures());
+                PearsonsCorrelation correlation = new PearsonsCorrelation();
+                double[] labelsDouble = Arrays.stream(trainingDataSet.getLabels()).asDoubleStream().toArray();
+                List<XYChart.Data<String, Number>> dataList = IntStream.range(0, transposed.length).mapToObj(i -> {
+                    if (trainingDataSet.isProjected()) {
+                        return Pair.of("Projection_" + i, correlation.correlation(labelsDouble, transposed[i]));
+                    }
+                    return Pair.of(getFeatureExtractor().getFeatureNames()[i], correlation.correlation(labelsDouble, transposed[i]));
+                }).filter(p -> !p.getValue().isNaN()).sorted(Comparator.comparing((Function<Pair<String, Double>, Double>) Pair::getRight).reversed()).limit(10)
+                        .map(pair -> new XYChart.Data<>(pair.getKey(), (Number) pair.getValue())).collect(Collectors.toList());
+
+                Platform.runLater(() -> {
+                    corrBarChart.setTitle("Correlations");
+                    corrBarChart.getData().clear();
+                    XYChart.Series<String, Number> series = new XYChart.Series<>();
+                    series.getData().addAll(dataList);
+                    series.setName("Pearson Correlation");
+                    corrBarChart.getData().add(series);
+                    corrBarChart.setVisible(true);
+                });
             }
 
             Platform.runLater(() -> sampleAndScaleProgress.setProgress(0.6));
-            int conversion = (int) ((Arrays.stream(labels).average().getAsDouble() * labels.length));
-            int noConversion = labels.length - conversion;
+            int conversion = (int) ((Arrays.stream(trainingDataSet.getLabels()).average().getAsDouble() * trainingDataSet.getLabels().length));
+            int noConversion = trainingDataSet.getLabels().length - conversion;
             Platform.runLater(() -> {
                 sampleAndScaleProgress.setProgress(1.0);
                 accordion.getPanes().get(2).setDisable(false);
                 classesBarChart.setTitle("Class Distribution");
-                classesBarChart.setVisible(true);
                 classesBarChart.getData().clear();
 
                 XYChart.Series<String, Number> series = new XYChart.Series<>();
@@ -350,22 +371,25 @@ public abstract class AbstractController<T, R> {
         ((Button) actionEvent.getSource()).setDisable(true);
         forkJoinPool.execute(() -> {
             GridSearch.GridSearchResult selectedItem = resultRecordTable.getSelectionModel().getSelectedItem();
-            TrainedBinarySmileModel<R> smileModel;
-            if (usePCA() && transformedData == null) {
+            TrainedBinarySmileModel smileModel;
+            if (trainingDataSet.isProjected() || trainingDataSet.isScaled()) {
                 SmileModelTrainer<double[]> smileModelTrainer = new SmileModelTrainer<>(selectedItem.getClassifierTrainer());
-                smileModel = new TrainedBinarySmileModel<>(smileModelTrainer.trainModel(densePCAData, labels), scaler, projection, threshold);
+                smileModel = new TrainedBinarySmileModel<>(smileModelTrainer.trainModel(trainingDataSet.getFeatures(), trainingDataSet.getLabels()),
+                        featureTransform, projection, threshold);
             } else {
                 SmileModelTrainer<R> smileModelTrainer = new SmileModelTrainer<>(selectedItem.getClassifierTrainer());
-                smileModel = new TrainedBinarySmileModel<>(smileModelTrainer.trainModel(transformedData, labels), scaler, projection, threshold);
+                smileModel = new TrainedBinarySmileModel<>(smileModelTrainer.trainModel(trainingDataSet.getFeatures(), trainingDataSet.getLabels()),
+                        featureTransform, projection, threshold);
             }
             try {
-                this.smileModel = modelManager.saveModel(getModelIdentifier(), smileModel, System.currentTimeMillis());
+                modelPath = modelManager.saveModel(getModelIdentifier(), smileModel, System.currentTimeMillis());
+                currentModel = smileModel;
             } catch (IOException e) {
                 e.printStackTrace();
             }
             Platform.runLater(() -> {
                 ((Button) actionEvent.getSource()).setDisable(false);
-                currentModelLabel.setText(this.smileModel);
+                currentModelLabel.setText(String.valueOf(Paths.get(this.modelPath).getFileName()));
                 verifyButton.setDisable(false);
             });
 
@@ -373,13 +397,38 @@ public abstract class AbstractController<T, R> {
 
     }
 
+    public void setDenseProjection() {
+        if (linearkpca.isSelected()) {
+            PCA pca = new PCA(trainingDataSet.getFeatures());
+            pca.setProjection(Integer.parseInt(pcaDimensions.getText()));
+            projection = (Projection<R>) pca;
+        } else if (ppcaCheckBox.isSelected()) {
+            projection = (Projection<R>) new PPCA(trainingDataSet.getFeatures(), Integer.parseInt(pcaDimensions.getText()));
+        } else if (ghaCheckBox.isSelected()) {
+            projection = (Projection<R>) new GHA(getFeatureExtractor().getNumberOfFeatures(), Integer.parseInt(pcaDimensions.getText()), 0.00001);
+        } else if (gausskpca.isSelected()) {
+            projection = (Projection<R>) new KPCA<>(trainingDataSet.getFeatures(), new GaussianKernel(0.5), Integer.parseInt(pcaDimensions.getText()));
+        } else if (htangentkpca.isSelected()) {
+            projection = (Projection<R>) new KPCA<>(trainingDataSet.getFeatures(), new HyperbolicTangentKernel(), Integer.parseInt(pcaDimensions.getText()));
+        }
+    }
+
+    public void setSparseProjection() {
+        if (linearkpca.isSelected()) {
+            projection = (Projection<R>) new KPCA<>(trainingDataSet.getFeatures(), new SparseLinearKernel(), Integer.parseInt(pcaDimensions.getText()));
+        } else if (gausskpca.isSelected()) {
+            projection = (Projection<R>) new KPCA<>(trainingDataSet.getFeatures(), new SparseGaussianKernel(0.5), Integer.parseInt(pcaDimensions.getText()));
+        } else if (htangentkpca.isSelected()) {
+            projection = (Projection<R>) new KPCA<>(trainingDataSet.getFeatures(), new SparseHyperbolicTangentKernel(), Integer.parseInt(pcaDimensions.getText()));
+        }
+    }
+
     public void setStage(Stage primaryStage) {
         stage = primaryStage;
     }
 
     public void stopProcessing() {
-        forkJoinPool.shutdown();
-        forkJoinPool = new ForkJoinPool(2);
+        BalancedCrossValidation.stopAll();
         gridSearchButton.setDisable(false);
     }
 
@@ -387,7 +436,7 @@ public abstract class AbstractController<T, R> {
         if (currentModel != null) {
             currentModel.setThreshold(threshold);
             try {
-                smileModel = modelManager.saveModel(getModelIdentifier(), currentModel, System.currentTimeMillis());
+                modelPath = modelManager.saveModel(getModelIdentifier(), currentModel, System.currentTimeMillis());
                 verifyModel(null);
             } catch (IOException e) {
                 e.printStackTrace();
@@ -396,48 +445,41 @@ public abstract class AbstractController<T, R> {
     }
 
     public void verifyModel(ActionEvent actionEvent) {
-        if (rawData == null || labels == null) {
+        if (validationData == null) {
+            try {
+                validationData = getValidationData();
+            } catch (Exception e) {
+                System.err.println(e);
+                noDataLabel.setText(e.getMessage());
+            }
+        }
+
+        if (validationData == null || validationData.getFeatures() == null || validationData.getLabels() == null) {
             noDataLabel.setVisible(true);
         } else {
             verifyButton.setDisable(true);
             noDataLabel.setVisible(false);
             forkJoinPool.execute(() -> {
-                TrainedBinarySmileModel<R> model = null;
-                try {
-                    model = PersistenceUtils.deserialize(Paths.get(smileModel));
-                } catch (IOException | ClassNotFoundException e) {
-                    e.printStackTrace();
-                    return;
+                double[] preds = new double[validationData.getLabels().length];
+                for (int i = 0; i < validationData.getFeatures().length; i++) {
+                    preds[i] = currentModel.predict(validationData.getRawFeatures()[i]).getPosteriori()[1];
                 }
-
-                double[] preds = new double[labels.length];
-                for (int i = 0; i < rawData.length; i++) {
-                    preds[i] = model.predict(rawData[i]).getPosteriori()[1];
-                }
-                RocCurve rocCurve = new RocCurve(labels, preds);
-                TrainedBinarySmileModel finalModel = model;
-                final ConfusionMatrix matrix = new ConfusionMatrix(labels, Arrays.stream(preds).mapToInt(d -> d > finalModel.getThreshold() ? 1 : 0).toArray());
-                threshold = finalModel.getThreshold();
-                currentModel = finalModel;
+                RocCurve rocCurve = new RocCurve(validationData.getLabels(), preds);
+                PrecisionRecallCurve prcCurve = new PrecisionRecallCurve(validationData.getLabels(), preds);
+                final ConfusionMatrix matrix = new ConfusionMatrix(validationData.getLabels(),
+                        Arrays.stream(preds).mapToInt(d -> d > currentModel.getThreshold() ? 1 : 0).toArray());
 
                 Platform.runLater(() -> {
-                    resultROC.setVisible(true);
-                    resultROC.getData().clear();
-                    addROC(resultROC, "ROC", rocCurve, true, finalModel.getThreshold());
-                    modelInfoLabel
-                            .setText(String.format("Classifier: %s\nProjection: %s\nScaling: %s\nThreshold: %s", finalModel.getClassifier().getClass().getSimpleName(),
-                                    finalModel.getProjection() != null ? finalModel.getProjection().getClass().getSimpleName() : "None",
-                                    finalModel.getScaler() != null ? finalModel.getScaler().getClass().getSimpleName() : "None", finalModel.getThreshold()));
+                    finalROC.setVisible(true);
+                    finalROC.getData().clear();
+                    addROC(finalROC, "ROC", rocCurve, true, threshold);
+                    addPRC(finalROC, "PRC", prcCurve, true, threshold);
+                    modelInfoLabel.setText(
+                            String.format("Classifier: %s\nProjection: %s\nScaling: %s\nThreshold: %s", currentModel.getClassifier().getClass().getSimpleName(),
+                                    currentModel.getProjection() != null ? currentModel.getProjection().getClass().getSimpleName() : "None",
+                                    currentModel.getScaler() != null ? currentModel.getScaler().getClass().getSimpleName() : "None", currentModel.getThreshold()));
 
-                    placeholderColumnVerify.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().getLeft()));
-                    noConversionColumnVerify.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().getMiddle()));
-                    conversionColumnVerify.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().getRight()));
-
-                    Triple<String, String, String> row1 = Triple.of("Negative", String.valueOf(matrix.getMatrix()[0][0]), String.valueOf(matrix.getMatrix()[0][1]));
-                    Triple<String, String, String> row2 = Triple.of("Positive", String.valueOf(matrix.getMatrix()[1][0]), String.valueOf(matrix.getMatrix()[1][1]));
-                    ObservableList<Triple<String, String, String>> list = FXCollections.observableArrayList(row1, row2);
-                    confusionMatrixVerify.setItems(list);
-                    confusionMatrixVerify.setVisible(true);
+                    updateConfusionMartix(matrix, placeholderColumnVerify, noConversionColumnVerify, conversionColumnVerify, confusionMatrixVerify);
                     verifyButton.setDisable(false);
                 });
 
@@ -446,72 +488,254 @@ public abstract class AbstractController<T, R> {
 
     }
 
+    protected TrainedBinarySmileModel getCurrentModel() {
+        return currentModel;
+    }
+
     protected abstract String getModelIdentifier();
 
     protected abstract TrainingDataSet<R> getTrainingData(double resamplingRate, long limit, Consumer<Double> callback) throws Exception;
+
+    protected abstract TrainingDataSet<R> getValidationData() throws Exception;
+
+    private void addBar(double[] values, XYChart.Series<String, Number> seriesPos, int bin) {
+        XYChart.Data<String, Number> dataPos = new XYChart.Data<>(String.valueOf(bin),
+                Arrays.stream(values).filter(value -> value == bin).count() / (double) values.length);
+        seriesPos.getData().add(dataPos);
+    }
+
+    private void addPRC(LineChart<Number, Number> resultROC, String name, PrecisionRecallCurve prc, boolean clickable, double threshold) {
+        XYChart.Series<Number, Number> series = new XYChart.Series<>();
+        series.setName(name);
+        resultROC.getData().add(series);
+
+        final double[] x = prc.getRecalls();
+        final double[] y = prc.getPrecisions();
+        final double[] thresholds = prc.getThresholds();
+
+        drawXYChart(clickable, threshold, series, x, y, thresholds);
+
+    }
 
     private void addROC(LineChart<Number, Number> resultROC, String name, RocCurve rocCurve, boolean clickable, double threshold) {
         XYChart.Series<Number, Number> series = new XYChart.Series<>();
         series.setName(name);
         resultROC.getData().add(series);
 
-        final double[] truePositiveRates = rocCurve.getTruePositiveRates();
-        final double[] falsePositiveRates = rocCurve.getFalsePositiveRates();
+        final double[] x = rocCurve.getFalsePositiveRates();
+        final double[] y = rocCurve.getTruePositiveRates();
         final double[] thresholds = rocCurve.getThresholds();
 
-        for (int i = 0; i < truePositiveRates.length; i++) {
-            XYChart.Data<Number, Number> data = new XYChart.Data<>(falsePositiveRates[i], truePositiveRates[i], thresholds[i]);
+        drawXYChart(clickable, threshold, series, x, y, thresholds);
+
+    }
+
+    private void drawXYChart(boolean clickable, double threshold, XYChart.Series<Number, Number> series, double[] xValues, double[] yValues,
+                             double[] thresholds) {
+        for (int i = 0; i < yValues.length; i++) {
+            XYChart.Data<Number, Number> data = new XYChart.Data<>(xValues[i], yValues[i], thresholds[i]);
             series.getData().add(data);
             if (thresholds[i] == threshold) {
-                setActivePoint(data.getNode());
+                setActivePoint(data.getNode(), (Double) data.getExtraValue());
             }
 
             if (clickable) {
                 data.getNode().setOnMouseClicked(event -> {
-                    setActivePoint(data.getNode());
-                    setThreshold((Double) data.getExtraValue());
+                    setActivePoint(data.getNode(), (Double) data.getExtraValue());
                 });
 
             }
 
         }
+    }
+
+    private void initFeatureTable() {
+        featureNameColumn.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().getLeft()));
+        featureTypeColumn.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().getRight().name()));
+
+        String[] names = getFeatureExtractor().getFeatureNames();
+        FeatureExtractor.FeatureType[] types = getFeatureExtractor().getFeatureTypes();
+        List<Pair<String, FeatureExtractor.FeatureType>> featureData = IntStream.range(0, names.length)//
+                .mapToObj(i -> Pair.of(names[i], types[i]))//
+                .collect(Collectors.toList());
+        featuresTable.setItems(FXCollections.observableArrayList(featureData));
+        featuresTable.getSelectionModel().selectedItemProperty().addListener((obs, oldSelection, newSelection) -> {
+            if (newSelection != null) {
+                showFeatureHist(newSelection.getKey());
+            }
+        });
 
     }
 
-    private void setActivePoint(Node node) {
-        if (activePoint != null) {
-            activePoint.setStyle("");
+    private void setActivePoint(Node node, Double newThreshold) {
+        if (!activePoints.isEmpty() && threshold != newThreshold) {
+            activePoints.forEach(n -> n.setStyle(""));
         }
-        activePoint = node;
-        activePoint.setStyle("-fx-background-color: blue;");
+        node.setStyle("-fx-background-color: blue;");
+        activePoints.add(node);
+        threshold = newThreshold;
 
     }
 
-    private void setThreshold(double threshold) {
-        this.threshold = threshold;
+
+    private void showBinary(double[] xPos, double[] xNeg) {
+        Axis<String> xAxis = new CategoryAxis();
+        Axis<Number> yAxis = new NumberAxis();
+        BarChart<String, Number> areaChart = new BarChart<>(xAxis, yAxis);
+        featureDistribution.getChildren().clear();
+        featureDistribution.getChildren().add(areaChart);
+
+        XYChart.Series<String, Number> seriesPos = new XYChart.Series<>();
+        XYChart.Series<String, Number> seriesNeg = new XYChart.Series<>();
+
+        for (int i = 0; i < 2; i++) {
+            addBar(xPos, seriesPos, i);
+            seriesPos.setName("Positive");
+
+            addBar(xNeg, seriesNeg, i);
+            seriesNeg.setName("Negative");
+
+        }
+
+        areaChart.setData(FXCollections.observableArrayList(seriesPos, seriesNeg));
+        featureDistribution.setVisible(true);
+    }
+
+    private void showContinuous(double[] xPos, double[] xNeg, DescriptiveStatistics statisticsPos, DescriptiveStatistics statisticsNeg) {
+        Axis<String> xAxis = new CategoryAxis();
+        Axis<Number> yAxis = new NumberAxis();
+        AreaChart<String, Number> areaChart = new AreaChart<>(xAxis, yAxis);
+        areaChart.setCreateSymbols(false);
+        featureDistribution.getChildren().clear();
+        featureDistribution.getChildren().add(areaChart);
+
+        double percentile05 = Math.min(statisticsPos.getPercentile(5), statisticsNeg.getPercentile(5));
+        double percentile95 = Math.max(statisticsPos.getPercentile(95), statisticsNeg.getPercentile(95));
+        if (percentile05 == percentile95) {
+            featureDistribution.getChildren().clear();
+            featureDistribution.getChildren().add(new Label("All values equal " + percentile05));
+            return;
+        }
+        double[] breaks = Histogram.breaks(percentile05, percentile95, 100);
+
+        double[][] histogramPos = Histogram.histogram(xPos, breaks);
+        double[][] histogramNeg = Histogram.histogram(xNeg, breaks);
+
+        XYChart.Series<String, Number> seriesPos = new XYChart.Series<>();
+        XYChart.Series<String, Number> seriesNeg = new XYChart.Series<>();
+
+        for (int i = 0; i < 100; i++) {
+            XYChart.Data<String, Number> dataPos = new XYChart.Data<>(String.format("%.2f", (histogramPos[0][i] + histogramPos[1][i] / 2.0)),
+                    histogramPos[2][i] / (double) xPos.length);
+            seriesPos.getData().add(dataPos);
+            seriesPos.setName("Positive");
+
+            XYChart.Data<String, Number> dataNeg = new XYChart.Data<>(String.format("%.2f", (histogramNeg[0][i] + histogramNeg[1][i] / 2.0)),
+                    histogramNeg[2][i] / (double) xNeg.length);
+            seriesNeg.getData().add(dataNeg);
+            seriesNeg.setName("Negative");
+
+        }
+
+        areaChart.setData(FXCollections.observableArrayList(seriesPos, seriesNeg));
+        featureDistribution.setVisible(true);
+
+    }
+
+    private void showFeatureHist(String key) {
+        int featureIndex = Arrays.asList(getFeatureExtractor().getFeatureNames()).indexOf(key);
+        if (trainingDataSet == null || featureIndex == -1)
+            return;
+        FeatureExtractor.FeatureType featureType = getFeatureExtractor().getFeatureTypes()[featureIndex];
+
+        int[] labels = trainingDataSet.getLabels();
+        R[] rawFeatures = trainingDataSet.getRawFeatures();
+
+        DescriptiveStatistics statisticsPos = new DescriptiveStatistics();
+        DescriptiveStatistics statisticsNeg = new DescriptiveStatistics();
+
+        double[] xPos = new double[rawFeatures.length];
+        double[] xNeg = new double[rawFeatures.length];
+
+        for (int i = 0; i < rawFeatures.length; i++) {
+            R row = rawFeatures[i];
+            if (row instanceof double[]) {
+                double[] arr = (double[]) row;
+                if (labels[i] == 1) {
+                    statisticsPos.addValue(arr[featureIndex]);
+                    xPos[i] = arr[featureIndex];
+                } else {
+                    statisticsNeg.addValue(arr[featureIndex]);
+                    xNeg[i] = arr[featureIndex];
+                }
+            }
+        }
+
+        StringBuilder builder = new StringBuilder();
+        builder.append(String.format("Mean (Pos): %.2f \n", statisticsPos.getMean()));
+        builder.append(String.format("Mean (Neg): %.2f \n", statisticsNeg.getMean()));
+        builder.append(String.format("Std (Pos): %.2f \n", statisticsPos.getStandardDeviation()));
+        builder.append(String.format("Std (Neg): %.2f \n", statisticsNeg.getStandardDeviation()));
+        builder.append(String.format("Min (Pos): %.2f \n", statisticsPos.getMin()));
+        builder.append(String.format("Min (Neg): %.2f \n", statisticsNeg.getMin()));
+        builder.append(String.format("Max (Pos): %.2f \n", statisticsPos.getMax()));
+        builder.append(String.format("Max (Neg): %.2f \n", statisticsNeg.getMax()));
+        featureInfo.setText(builder.toString());
+
+        if (featureType.equals(FeatureExtractor.FeatureType.Continuous)) {
+            showContinuous(xPos, xNeg, statisticsPos, statisticsNeg);
+        } else {
+            showBinary(xPos, xNeg);
+        }
+
+    }
+
+    private void showImportances(double[] importances) {
+        if (importances != null) {
+            featureImportancesName.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().getLeft()));
+            featureImportancesValue.setCellValueFactory(param -> new SimpleDoubleProperty(param.getValue().getRight()).asObject());
+            List<Pair<String, Double>> pairs;
+            if (currentModel.getProjection() == null) {
+                pairs = IntStream.range(0, getFeatureExtractor().getNumberOfFeatures())
+                        .mapToObj(i -> Pair.of(getFeatureExtractor().getFeatureNames()[i], importances[i])).collect(Collectors.toList());
+            } else {
+                pairs = IntStream.range(0, importances.length).mapToObj(i -> Pair.of("Projection_" + i, importances[i])).collect(Collectors.toList());
+            }
+            featureImportances.setItems(FXCollections.observableArrayList(pairs));
+            featureImportances.setVisible(true);
+        } else {
+            featureImportances.setVisible(false);
+        }
     }
 
     private void showResult(GridSearch.GridSearchResult gridSearchResult) {
         if (gridSearchResult != null) {
             final ConfusionMatrix matrix = gridSearchResult.getcVresult().getConfusionMatrix();
             if (matrix != null) {
-                placeholderColumn.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().getLeft()));
-                negativeColumn.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().getMiddle()));
-                positiveColumn.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().getRight()));
-
-                Triple<String, String, String> row1 = Triple.of("Negative", String.valueOf(matrix.getMatrix()[0][0]), String.valueOf(matrix.getMatrix()[0][1]));
-                Triple<String, String, String> row2 = Triple.of("Positive", String.valueOf(matrix.getMatrix()[1][0]), String.valueOf(matrix.getMatrix()[1][1]));
-                ObservableList<Triple<String, String, String>> list = FXCollections.observableArrayList(row1, row2);
-                confusionMatrix.setItems(list);
-                confusionMatrix.setVisible(true);
+                updateConfusionMartix(matrix, placeholderColumn, negativeColumn, positiveColumn, confusionMatrix);
             } else {
                 confusionMatrix.setVisible(false);
             }
             rocCurve.setVisible(true);
             rocCurve.getData().clear();
             addROC(rocCurve, "ROC", gridSearchResult.getcVresult().getRoc(), true, threshold);
+            addPRC(rocCurve, "PRC", gridSearchResult.getcVresult().getPrc(), true, threshold);
         }
 
+    }
+
+    private void updateConfusionMartix(ConfusionMatrix matrix, TableColumn<Triple<String, String, String>, String> placeholderColumn,
+                                       TableColumn<Triple<String, String, String>, String> negativeColumn, TableColumn<Triple<String, String, String>, String> positiveColumn,
+                                       TableView<Triple<String, String, String>> confusionMatrix) {
+        placeholderColumn.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().getLeft()));
+        negativeColumn.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().getMiddle()));
+        positiveColumn.setCellValueFactory(param -> new SimpleStringProperty(param.getValue().getRight()));
+
+        Triple<String, String, String> row1 = Triple.of("Negative", String.valueOf(matrix.getMatrix()[0][0]), String.valueOf(matrix.getMatrix()[0][1]));
+        Triple<String, String, String> row2 = Triple.of("Positive", String.valueOf(matrix.getMatrix()[1][0]), String.valueOf(matrix.getMatrix()[1][1]));
+        ObservableList<Triple<String, String, String>> list = FXCollections.observableArrayList(row1, row2);
+        confusionMatrix.setItems(list);
+        confusionMatrix.setVisible(true);
     }
 
     private boolean usePCA() {

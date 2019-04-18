@@ -70,7 +70,7 @@ public class TrainedBinarySmileModel<T> implements Serializable {
             if (_scaler != null)
                 x = (T) _scaler.transform((double[]) x);
             if (_projection != null)
-                x = (T) _projection.project((T) x);
+                x = (T) _projection.project(x);
 
             final double[] posteriori = new double[2];
             final int predict = _classifier.predict(x, posteriori);

@@ -1,6 +1,7 @@
 package de.ixeption.smilefx.training;
 
 import de.ixeption.smilefx.features.FeatureExtractor;
+import org.apache.commons.lang3.time.StopWatch;
 import org.apache.commons.lang3.tuple.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,11 +37,11 @@ public class GridSearch<T> {
 
 
     /**
-     * @param MLModelTypeToSearches Set of Models to be used in grid search    *
+     * @param mLModelTypeToSearches Set of Models to be used in grid search    *
      * @param foldk                 number of folds for cross-validation, 10 is a good default
      */
-    public GridSearch(EnumSet<MLModelType> MLModelTypeToSearches, int foldk, Class<T> type) {
-        this._models = MLModelTypeToSearches;
+    public GridSearch(EnumSet<MLModelType> mLModelTypeToSearches, int foldk, Class<T> type) {
+        this._models = mLModelTypeToSearches;
         this._foldk = foldk;
         this._type = type;
         _gridSearchResults = new ArrayList<>();
@@ -50,32 +51,31 @@ public class GridSearch<T> {
      * Uses grid search and cross validation to find the best model
      * uses multi-threading
      *
-     * @param features             the features to train the model (may not be scaled)
-     * @param labels               the labels
+     * @param dataSet              the data set
      * @param measures             the measures to execute
      * @param measureForComparsion the measure to use for comparsion (simple class name)
      * @param featureExtractor     the feature extractor
      * @return the best model or null
      */
     public @Nullable
-    TrainedBinarySmileModel<T> findBestModel(T[] features, int[] labels, ClassificationMeasure[] measures, String measureForComparsion,
-                                             FeatureExtractor<?, T> featureExtractor) {
+    TrainedBinarySmileModel findBestModel(TrainingDataSet<T> dataSet, ClassificationMeasure[] measures, String measureForComparsion,
+                                          FeatureExtractor<?, T> featureExtractor) {
         T[] x;
         Scaler scaler = null;
-        if (features instanceof double[][]) {
+        if (dataSet.getFeatures() instanceof double[][]) {
             scaler = new Scaler();
-            scaler.learn((double[][]) features);
-            x = (T[]) scaler.transform((double[][]) features);
-            printFeatureImportance(labels, (double[][]) x, 20, featureExtractor);
+            scaler.learn((double[][]) dataSet.getFeatures());
+            x = (T[]) scaler.transform((double[][]) dataSet.getFeatures());
+            printFeatureImportance(dataSet.getLabels(), (double[][]) x, 20, featureExtractor);
         } else {
-            x = features;
+            x = dataSet.getFeatures();
         }
 
-        final long before = System.currentTimeMillis();
         _log.info("Starting grid search for {}" + _models);
-        _results = gridSearch(_models, x, labels, featureExtractor.getNumberOfFeatures(), measures,
+        StopWatch stopWatch = new StopWatch();
+        _results = gridSearch(_models, dataSet, featureExtractor.getNumberOfFeatures(), measures,
                 Runtime.getRuntime().availableProcessors() > 2 ? Runtime.getRuntime().availableProcessors() - 1 : 1, null);
-        _log.info("Finished grid search in {} ms", System.currentTimeMillis() - before);
+        _log.info("Finished grid search in {}", stopWatch.toString());
 
         final Optional<GridSearchResult> best = _results.stream().max(Comparator.comparingDouble(gs -> {
             final double measure = gs.getcVresult().getMeasure(measureForComparsion);
@@ -88,9 +88,9 @@ public class GridSearch<T> {
             _log.info("Found best model {}: {} @ {}", best.get().getMLModelType(), result.getcVresult().getMeasure(measureForComparsion),
                     Arrays.toString(result.getParams().entrySet().toArray()));
             SmileModelTrainer<T> smileModelTrainer = new SmileModelTrainer<>(result.getClassifierTrainer());
-            final TrainedBinarySmileModel<T> smileModel = new TrainedBinarySmileModel<>(smileModelTrainer.trainModel(x, labels), scaler, null, 0.5);
+            final TrainedBinarySmileModel smileModel = new TrainedBinarySmileModel(smileModelTrainer.trainModel(x, dataSet.getLabels()), scaler, null, 0.5);
             if (smileModel.getImportancesIfAvailable().isPresent()) {
-                double[] importances = smileModel.getImportancesIfAvailable().get();
+                double[] importances = (double[]) smileModel.getImportancesIfAvailable().get();
                 String[] labelNames = featureExtractor.getFeatureNames();
                 _log.info("Importances (>0): ");
                 for (int i = 0; i < importances.length; i++) {
@@ -107,16 +107,27 @@ public class GridSearch<T> {
     }
 
     @SuppressWarnings("unchecked")
-    public List<GridSearchResult> gridSearch(EnumSet<MLModelType> models, T[] data, int[] labels, int numFeatures, ClassificationMeasure[] measures,
+    public List<GridSearchResult> gridSearch(EnumSet<MLModelType> models, TrainingDataSet<T> dataSet, int numFeatures, ClassificationMeasure[] measures,
                                              int parallelism, Consumer<Double> progressCallback) {
-        final double mean = Arrays.stream(labels).average().orElseThrow(IllegalArgumentException::new);
 
-        _log.info("Dataset size: {} number of features: {} mean label: {}", labels.length, numFeatures, mean);
-        models.forEach(m -> gridSearchModel(m, mean, numFeatures, _type));
-        Map<ClassifierTrainer<T>, BalancedCrossValidation.CVresult> map = BalancedCrossValidation.bcv(_foldk, data, labels, measures, parallelism,
-                progressCallback, false, _gridSearchResults.stream().map(gridSearchResult -> gridSearchResult._classifierTrainer)//
-                        .toArray(ClassifierTrainer[]::new));//
-
+        Map<ClassifierTrainer<T>, CVResult> map;
+        if (dataSet instanceof TrainTestSplitDataSet) {
+            _log.info("Dataset train size: {} number of train features: {}", ((TrainTestSplitDataSet<T>) dataSet).getLabelsTrain().length, numFeatures);
+            models.forEach(
+                    m -> gridSearchModel(m, Arrays.stream(((TrainTestSplitDataSet<T>) dataSet).getLabelsTrain()).average().getAsDouble(), numFeatures, _type));
+            map = BalancedTrainTestSplitValidation.bttsv(((TrainTestSplitDataSet<T>) dataSet).getFeaturesTrain(),
+                    ((TrainTestSplitDataSet<T>) dataSet).getLabelsTrain(), ((TrainTestSplitDataSet<T>) dataSet).getFeaturesTest(),
+                    ((TrainTestSplitDataSet<T>) dataSet).getLabelsTest(), measures, parallelism, progressCallback, false,
+                    _gridSearchResults.stream().map(gridSearchResult -> gridSearchResult._classifierTrainer)//
+                            .toArray(ClassifierTrainer[]::new));//
+        } else {
+            final double mean = Arrays.stream(dataSet.getLabels()).average().orElseThrow(IllegalArgumentException::new);
+            _log.info("Dataset size: {} number of features: {} mean label: {}", dataSet.getLabels().length, numFeatures, mean);
+            models.forEach(m -> gridSearchModel(m, mean, numFeatures, _type));
+            map = BalancedCrossValidation.bcv(_foldk, dataSet.getFeatures(), dataSet.getLabels(), measures, parallelism, progressCallback, false,
+                    _gridSearchResults.stream().map(gridSearchResult -> gridSearchResult._classifierTrainer)//
+                            .toArray(ClassifierTrainer[]::new));//
+        }
         for (GridSearchResult res : _gridSearchResults) {
             res.setcVresult(map.get(res.getClassifierTrainer()));
         }
@@ -279,7 +290,7 @@ public class GridSearch<T> {
         }
     }
 
-    private void printFeatureImportance(int[] labels, double[][] x, int topn, FeatureExtractor<?, T> featureExtractor) {
+    public void printFeatureImportance(int[] labels, double[][] x, int topn, FeatureExtractor<?, T> featureExtractor) {
         final int classes = IntStream.of(labels).distinct().toArray().length;
         final double[] rank;
         if (classes == 2) {
@@ -314,7 +325,7 @@ public class GridSearch<T> {
 
         private final Map<String, String> params;
         private final ClassifierTrainer _classifierTrainer;
-        private BalancedCrossValidation.CVresult _cVresult;
+        private CVResult _cVresult;
         private MLModelType _mlModelType;
 
 
@@ -344,11 +355,11 @@ public class GridSearch<T> {
             return params;
         }
 
-        public BalancedCrossValidation.CVresult getcVresult() {
+        public CVResult getcVresult() {
             return _cVresult;
         }
 
-        public void setcVresult(BalancedCrossValidation.CVresult cVresult) {
+        public void setcVresult(CVResult cVresult) {
             _cVresult = cVresult;
         }
     }

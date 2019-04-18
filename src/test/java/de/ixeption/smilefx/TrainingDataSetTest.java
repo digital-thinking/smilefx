@@ -10,7 +10,7 @@ public class TrainingDataSetTest {
 
     @Test
     public void testAdd() {
-        TrainingDataSet cut = new TrainingDataSet();
+        TrainingDataSet cut = new TrainingDataSet(double[].class);
         cut.addDatapoint(new double[]{1}, 1);
         cut.addDatapoint(new double[]{1}, 1);
         cut.addDatapoint(new double[]{1}, 1);

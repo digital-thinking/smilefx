@@ -4,7 +4,7 @@
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
 <AnchorPane xmlns:fx="http://javafx.com/fxml/1" prefHeight="768.0" prefWidth="1280.0" stylesheets="@stylingMain.css"
-            xmlns="http://javafx.com/javafx/8"
+            xmlns="http://javafx.com/javafx/11"
             fx:controller="de.ixeption.smilefx.example.SmileFXController">
 
     <Accordion fx:id="accordion" AnchorPane.bottomAnchor="0.0" AnchorPane.leftAnchor="0.0" AnchorPane.rightAnchor="0.0"
@@ -13,16 +13,27 @@
             <TitledPane text="Data">
                 <AnchorPane>
                     <GridPane alignment="center" hgap="10" vgap="10">
-                        <VBox fx:id="dataInput" GridPane.rowIndex="0"/>
+                        <TableView fx:id="featuresTable" prefHeight="400" prefWidth="400"
+                                   fixedCellSize="30" GridPane.rowIndex="0" GridPane.columnIndex="0">
+                            <columns>
+                                <TableColumn fx:id="featureNameColumn" text="Name"/>
+                                <TableColumn fx:id="featureTypeColumn" text="Type"/>
+                            </columns>
+                        </TableView>
+                        <VBox GridPane.rowIndex="0" GridPane.columnIndex="1">
+                            <Label fx:id="extractorInfo"/>
+                            <Label fx:id="featureInfo"/>
+                        </VBox>
                         <Label text="limit" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
                         <TextField fx:id="limitData" GridPane.rowIndex="1" GridPane.columnIndex="1" text="-1"/>
                         <Label text="samplingFactor for negatives" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
-                        <TextField fx:id="samplingFactor" text="0.1" GridPane.rowIndex="2" GridPane.columnIndex="1"/>
+                        <TextField fx:id="samplingFactor" text="1.0" GridPane.rowIndex="2" GridPane.columnIndex="1"/>
                         <Button fx:id="fetchButton" onAction="#fetchData" text="Fetch data " GridPane.rowIndex="3"
                                 GridPane.columnIndex="0"/>
                         <ProgressBar fx:id="fetchProgress" progress="0.0" visible="false" GridPane.rowIndex="3"
                                      GridPane.columnIndex="1"/>
                         <Label fx:id="fetchResult" GridPane.rowIndex="4" GridPane.columnIndex="1"/>
+                        <Pane fx:id="featureDistribution" GridPane.rowIndex="0" GridPane.columnIndex="2"/>
                     </GridPane>
                 </AnchorPane>
             </TitledPane>
@@ -34,7 +45,8 @@
                             <TextField fx:id="pcaDimensions" text="10"/>
                         </VBox>
                         <VBox GridPane.rowIndex="0" GridPane.columnIndex="1">
-                            <CheckBox fx:id="scaleCheckbox" text="scale" selected="true"/>
+                            <CheckBox fx:id="scaleCheckbox" text="scale"/>
+                            <CheckBox fx:id="standardizeCheckbox" text="standardize"/>
                             <CheckBox fx:id="ppcaCheckBox" text="ppca"/>
                             <CheckBox fx:id="ghaCheckBox" text="gha"/>
                         </VBox>
@@ -56,6 +68,14 @@
                                 <NumberAxis side="LEFT"/>
                             </yAxis>
                         </BarChart>
+                        <BarChart fx:id="corrBarChart" visible="false" GridPane.rowIndex="2" GridPane.columnIndex="1">
+                            <xAxis>
+                                <CategoryAxis side="BOTTOM"/>
+                            </xAxis>
+                            <yAxis>
+                                <NumberAxis side="LEFT" upperBound="1.0"/>
+                            </yAxis>
+                        </BarChart>
                         <Button fx:id="exportButton" visible="false" GridPane.rowIndex="3" GridPane.columnIndex="0"
                                 text="exportDataToCSV" onAction="#exportToCSV"/>
                     </GridPane>
@@ -65,29 +85,34 @@
             <TitledPane animated="false" text="Training" disable="true">
                 <AnchorPane>
                     <GridPane alignment="center" hgap="10" vgap="10">
-                        <CheckBox fx:id="SVM_Gaussian" text="SVM_Gaussian" GridPane.rowIndex="0"
-                                  GridPane.columnIndex="0"/>
-                        <CheckBox fx:id="SVM_Linear" text="SVM_Linear" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
-                        <CheckBox fx:id="SVM_Laplacian" text="SVM_Laplacian" GridPane.rowIndex="2"
-                                  GridPane.columnIndex="0"/>
-                        <CheckBox fx:id="AdaBoost" text="AdaBoost" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
-                        <CheckBox fx:id="RandomForest" text="RandomForest" GridPane.rowIndex="4"
-                                  GridPane.columnIndex="0"/>
-                        <CheckBox fx:id="GradientBoostedTree" text="GradientBoostedTree" GridPane.rowIndex="5"
-                                  GridPane.columnIndex="0"/>
-                        <Label text="Threads" GridPane.rowIndex="6" GridPane.columnIndex="0"/>
-                        <TextField fx:id="numThreads" text="4" GridPane.rowIndex="7" GridPane.columnIndex="0"/>
-                        <Button fx:id="gridSearchButton" onAction="#gridSearch" text="GridSearch " GridPane.rowIndex="0"
-                                GridPane.columnIndex="1"/>
-                        <ProgressBar fx:id="trainingProgress" progress="0.0" visible="false" GridPane.rowIndex="0"
-                                     GridPane.columnIndex="2"/>
-                        <Button text="KILL" onAction="#stopProcessing" GridPane.rowIndex="0" GridPane.columnIndex="3"/>
+                        <VBox GridPane.rowIndex="0" GridPane.columnIndex="0">
+                            <CheckBox fx:id="SVM_Gaussian" text="SVM_Gaussian"/>
+                            <CheckBox fx:id="SVM_Linear" text="SVM_Linear"/>
+                            <CheckBox fx:id="SVM_Laplacian" text="SVM_Laplacian"/>
+                            <CheckBox fx:id="AdaBoost" text="AdaBoost"/>
+                            <CheckBox fx:id="RandomForest" text="RandomForest"/>
+                            <CheckBox fx:id="GradientBoostedTree" text="GradientBoostedTree"/>
+                        </VBox>
+                        <VBox GridPane.rowIndex="1" GridPane.columnIndex="0">
+                            <Label text="Threads"/>
+                            <TextField fx:id="numThreads" text="5"/>
+                            <Label text="Folds (k-fold cross validation)"/>
+                            <TextField fx:id="kFolds" text="10"/>
+                        </VBox>
+                        <VBox GridPane.rowIndex="0" GridPane.columnIndex="1">
+                            <Button fx:id="gridSearchButton" onAction="#gridSearch" text="Grid Search!"
+                                    GridPane.rowIndex="0" GridPane.columnIndex="1"/>
+                            <ProgressBar fx:id="trainingProgress" progress="0.0" visible="false" GridPane.rowIndex="0"
+                                         GridPane.columnIndex="2"/>
+                            <Button text="Stop Training" onAction="#stopProcessing" GridPane.rowIndex="0"
+                                    GridPane.columnIndex="3"/>
+                        </VBox>
                     </GridPane>
                 </AnchorPane>
             </TitledPane>
             <TitledPane text="Visualize" disable="true">
                 <AnchorPane>
-                    <GridPane alignment="center" hgap="10" vgap="10">
+                    <GridPane>
                         <TableView fx:id="resultRecordTable" AnchorPane.bottomAnchor="0.0" AnchorPane.topAnchor="0.0"
                                    GridPane.rowIndex="0" GridPane.columnIndex="0">
                             <columns>
@@ -101,7 +126,7 @@
                             </columns>
                         </TableView>
                         <LineChart fx:id="rocCurve" visible="false" GridPane.rowIndex="0" GridPane.columnIndex="1"
-                                   animated="false">
+                                   animated="false" prefWidth="350" prefHeight="350">
                             <xAxis>
                                 <NumberAxis side="BOTTOM" label="False Positive Rate" autoRanging="false"
                                             upperBound="1.0" tickUnit="0.1"/>
@@ -123,24 +148,25 @@
                             </TableView>
                         </VBox>
                         <VBox GridPane.rowIndex="1" GridPane.columnIndex="0">
-                            <Button text="trainModelOnAllData" onAction="#saveModel"/>
+                            <Button text="Train Model" onAction="#saveModel"/>
                         </VBox>
                     </GridPane>
                 </AnchorPane>
             </TitledPane>
             <TitledPane text="Validate">
                 <AnchorPane>
-                    <GridPane alignment="center" hgap="10" vgap="10">
-                        <Label fx:id="currentModelLabel" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
-                        <Button fx:id="loadModelButton" GridPane.rowIndex="0" GridPane.columnIndex="1" text="loadModel"
-                                onAction="#openModel"/>
-                        <Label fx:id="noDataLabel" text="Data has to be loaded" visible="false" GridPane.rowIndex="1"
-                               GridPane.columnIndex="0"/>
-                        <Button fx:id="verifyButton" GridPane.rowIndex="1" GridPane.columnIndex="1" text="verify"
-                                onAction="#verifyModel"/>
-                        <Button fx:id="updateThreshold" GridPane.rowIndex="2" GridPane.columnIndex="1"
-                                text="updateThreshold" onAction="#updateThreshold"/>
-                        <LineChart fx:id="resultROC" visible="false" GridPane.rowIndex="2" animated="false">
+                    <GridPane hgap="10" vgap="10" prefHeight="600.0" prefWidth="1200.0">
+                        <VBox GridPane.rowIndex="0" GridPane.columnIndex="0" prefWidth="400">
+                            <Button fx:id="loadModelButton" text="load model" onAction="#openModel"/>
+                            <Label fx:id="currentModelLabel" text="No model loaded"/>
+                            <Label fx:id="noDataLabel" text="No Data!" visible="false"/>
+                        </VBox>
+                        <VBox GridPane.rowIndex="0" GridPane.columnIndex="1" prefWidth="400">
+                            <Button fx:id="verifyButton" text="verify" onAction="#verifyModel"/>
+                            <Button fx:id="updateThreshold" text="updateThreshold" onAction="#updateThreshold"/>
+                        </VBox>
+                        <LineChart fx:id="finalROC" visible="false" GridPane.rowIndex="1" GridPane.columnIndex="0"
+                                   animated="false" prefWidth="400" prefHeight="400">
                             <xAxis>
                                 <NumberAxis side="BOTTOM" label="False Positive Rate" autoRanging="false"
                                             upperBound="1.0" tickUnit="0.1"/>
@@ -150,15 +176,28 @@
                                             tickUnit="0.1"/>
                             </yAxis>
                         </LineChart>
-                        <TableView fx:id="confusionMatrixVerify" visible="false" prefHeight="100" prefWidth="400"
-                                   fixedCellSize="30" GridPane.rowIndex="3" GridPane.columnIndex="0">
+
+                        <VBox GridPane.rowIndex="1" GridPane.columnIndex="1" prefWidth="100">
+                            <TableView fx:id="confusionMatrixVerify" prefHeight="100" prefWidth="100"
+                                       fixedCellSize="30">
+                                <columns>
+                                    <TableColumn fx:id="placeholderColumnVerify" sortable="false"/>
+                                    <TableColumn fx:id="noConversionColumnVerify" text="Pred False" sortable="false"/>
+                                    <TableColumn fx:id="conversionColumnVerify" text="Pred True" sortable="false"/>
+                                </columns>
+                            </TableView>
+                            <Label fx:id="modelInfoLabel"/>
+                            <HBox fx:id="predictPane" visible="false"/>
+                        </VBox>
+
+                        <TableView fx:id="featureImportances" prefHeight="100" prefWidth="250"
+                                   fixedCellSize="30" GridPane.rowIndex="1" GridPane.columnIndex="2">
                             <columns>
-                                <TableColumn fx:id="placeholderColumnVerify" sortable="false"/>
-                                <TableColumn fx:id="noConversionColumnVerify" text="PredNoConversion" sortable="false"/>
-                                <TableColumn fx:id="conversionColumnVerify" text="PredConversion" sortable="false"/>
+                                <TableColumn fx:id="featureImportancesName" text="Name" prefWidth="150"/>
+                                <TableColumn fx:id="featureImportancesValue" text="Importance"/>
                             </columns>
                         </TableView>
-                        <Label fx:id="modelInfoLabel" GridPane.rowIndex="3" GridPane.columnIndex="1"/>
+
                     </GridPane>
                 </AnchorPane>
             </TitledPane>

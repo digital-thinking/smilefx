@@ -112,26 +112,6 @@
     -fx-background-color: #04293a;
 }
 
-.data0.chart-bar {
-    -fx-background-color: #04293a;
-}
-
-.data1.chart-bar {
-    -fx-background-color: #BD8D51;
-}
-
-.data2.chart-bar {
-    -fx-background-color: #04293a;
-}
-
-.data3.chart-bar {
-    -fx-background-color: #BD8D51;
-}
-
-.data4.chart-bar {
-    -fx-background-color: #04293a;
-}
-
 .axis-tick-mark,
 .axis-minor-tick-mark,
 .chart-vertical-grid-lines,
@@ -144,8 +124,4 @@
 .chart {
     -fx-font-family: "Lato";
     -fx-font-size: 11pt;
-}
-
-.default-color0.chart-series-line {
-    -fx-stroke: #04293a;
 }
