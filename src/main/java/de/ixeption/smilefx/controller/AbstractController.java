@@ -23,6 +23,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.lang3.tuple.Triple;
 import org.apache.commons.math3.stat.correlation.PearsonsCorrelation;
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
+import org.jetbrains.annotations.NotNull;
 import smile.feature.FeatureTransform;
 import smile.feature.RobustStandardizer;
 import smile.feature.Scaler;
@@ -219,7 +220,7 @@ public abstract class AbstractController<T, R> {
         }
 
         forkJoinPool.execute(() -> {
-            GridSearch<R> search = new GridSearch<>(modelTypes, Integer.parseInt(kFolds.getText()), getFeatureDataType());
+            GridSearch<R> search = getGridSearch(modelTypes);
             search.printFeatureImportance(trainingDataSet.getLabels(), trainingDataSet.getFeatures(), 20, getFeatureExtractor());
             final List<GridSearch.GridSearchResult> list = search.gridSearch(modelTypes, trainingDataSet, getFeatureExtractor().getNumberOfFeatures(),
                     new ClassificationMeasure[]{new Accuracy(), new Sensitivity(), new Precision(), new MCCMeasure(), new FMeasure()},
@@ -238,6 +239,11 @@ public abstract class AbstractController<T, R> {
             });
         });
 
+    }
+
+    @NotNull
+    protected GridSearch<R> getGridSearch(EnumSet<GridSearch.MLModelType> modelTypes) {
+        return new GridSearch<>(modelTypes, Integer.parseInt(kFolds.getText()), getFeatureDataType());
     }
 
     @FXML

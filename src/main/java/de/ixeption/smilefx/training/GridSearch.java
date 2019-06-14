@@ -33,17 +33,15 @@ public class GridSearch<T> {
     private final int _foldk;
     private final Class<T> _type;
     private List<GridSearchResult> _gridSearchResults;
-    private List<GridSearchResult> _results;
-
 
     /**
      * @param mLModelTypeToSearches Set of Models to be used in grid search    *
      * @param foldk                 number of folds for cross-validation, 10 is a good default
      */
     public GridSearch(EnumSet<MLModelType> mLModelTypeToSearches, int foldk, Class<T> type) {
-        this._models = mLModelTypeToSearches;
-        this._foldk = foldk;
-        this._type = type;
+        _models = mLModelTypeToSearches;
+        _foldk = foldk;
+        _type = type;
         _gridSearchResults = new ArrayList<>();
     }
 
@@ -64,8 +62,8 @@ public class GridSearch<T> {
         Scaler scaler = null;
         if (dataSet.getFeatures() instanceof double[][]) {
             scaler = new Scaler();
-            scaler.learn((double[][]) dataSet.getFeatures());
-            x = (T[]) scaler.transform((double[][]) dataSet.getFeatures());
+            scaler.learn(dataSet.getFeatures());
+            x = (T[]) scaler.transform(dataSet.getFeatures());
             printFeatureImportance(dataSet.getLabels(), (double[][]) x, 20, featureExtractor);
         } else {
             x = dataSet.getFeatures();
@@ -73,11 +71,11 @@ public class GridSearch<T> {
 
         _log.info("Starting grid search for {}" + _models);
         StopWatch stopWatch = new StopWatch();
-        _results = gridSearch(_models, dataSet, featureExtractor.getNumberOfFeatures(), measures,
+        List<GridSearchResult> results = gridSearch(_models, dataSet, featureExtractor.getNumberOfFeatures(), measures,
                 Runtime.getRuntime().availableProcessors() > 2 ? Runtime.getRuntime().availableProcessors() - 1 : 1, null);
         _log.info("Finished grid search in {}", stopWatch.toString());
 
-        final Optional<GridSearchResult> best = _results.stream().max(Comparator.comparingDouble(gs -> {
+        final Optional<GridSearchResult> best = results.stream().max(Comparator.comparingDouble(gs -> {
             final double measure = gs.getcVresult().getMeasure(measureForComparsion);
             return Double.isNaN(measure) ? 0.0 : measure;
         }));
@@ -110,6 +108,7 @@ public class GridSearch<T> {
     public List<GridSearchResult> gridSearch(EnumSet<MLModelType> models, TrainingDataSet<T> dataSet, int numFeatures, ClassificationMeasure[] measures,
                                              int parallelism, Consumer<Double> progressCallback) {
 
+        List<GridSearchResult> gridSearchResults = getGridSearchResults();
         Map<ClassifierTrainer<T>, CVResult> map;
         if (dataSet instanceof TrainTestSplitDataSet) {
             _log.info("Dataset train size: {} number of train features: {}", ((TrainTestSplitDataSet<T>) dataSet).getLabelsTrain().length, numFeatures);
@@ -118,24 +117,99 @@ public class GridSearch<T> {
             map = BalancedTrainTestSplitValidation.bttsv(((TrainTestSplitDataSet<T>) dataSet).getFeaturesTrain(),
                     ((TrainTestSplitDataSet<T>) dataSet).getLabelsTrain(), ((TrainTestSplitDataSet<T>) dataSet).getFeaturesTest(),
                     ((TrainTestSplitDataSet<T>) dataSet).getLabelsTest(), measures, parallelism, progressCallback, false,
-                    _gridSearchResults.stream().map(gridSearchResult -> gridSearchResult._classifierTrainer)//
+                    gridSearchResults.stream().map(gridSearchResult -> gridSearchResult._classifierTrainer)//
                             .toArray(ClassifierTrainer[]::new));//
         } else {
             final double mean = Arrays.stream(dataSet.getLabels()).average().orElseThrow(IllegalArgumentException::new);
             _log.info("Dataset size: {} number of features: {} mean label: {}", dataSet.getLabels().length, numFeatures, mean);
             models.forEach(m -> gridSearchModel(m, mean, numFeatures, _type));
             map = BalancedCrossValidation.bcv(_foldk, dataSet.getFeatures(), dataSet.getLabels(), measures, parallelism, progressCallback, false,
-                    _gridSearchResults.stream().map(gridSearchResult -> gridSearchResult._classifierTrainer)//
+                    gridSearchResults.stream().map(gridSearchResult -> gridSearchResult._classifierTrainer)//
                             .toArray(ClassifierTrainer[]::new));//
         }
-        for (GridSearchResult res : _gridSearchResults) {
+        for (GridSearchResult res : gridSearchResults) {
             res.setcVresult(map.get(res.getClassifierTrainer()));
         }
-        return _gridSearchResults;
+        return gridSearchResults;
 
     }
 
-    public void gridSearchModel(MLModelType model, double mean, int numberOfFeatures, Class<T> type) {
+    public void printFeatureImportance(int[] labels, double[][] x, int topn, FeatureExtractor<?, T> featureExtractor) {
+        final int classes = IntStream.of(labels).distinct().toArray().length;
+        final double[] rank;
+        if (classes == 2) {
+            _log.info("Binary classification: feature importance (SNR)");
+            SignalNoiseRatio signalNoiseRatio = new SignalNoiseRatio();
+            rank = signalNoiseRatio.rank(x, labels);
+
+        } else {
+            _log.info("Multi-class classification: eature importance (SNR)");
+            SumSquaresRatio sumSquaresRatio = new SumSquaresRatio();
+            rank = sumSquaresRatio.rank(x, labels);
+
+        }
+        IntStream.range(0, rank.length)
+                .boxed()//
+                .collect(toMap(featureExtractor::getFeatureNameForIndex, i -> rank[i]))//
+                .entrySet()
+                .stream()//
+                .filter(e -> !e.getValue().isNaN())
+                .sorted((o1, o2) -> Double.compare(Math.abs(o2.getValue()), Math.abs(o1.getValue())))
+                .limit(topn)
+                .forEach(e -> _log.info("{}\t\t{}", e.getKey(), e.getValue()));
+    }
+
+    protected void addToCrossValidation(MLModelType mlModelType, ClassifierTrainer<T> trainer, HashMap<String, String> params) {
+        getGridSearchResults().add(new GridSearchResult(params, trainer, mlModelType));
+    }
+
+    protected List<GridSearchResult> getGridSearchResults() {
+        return _gridSearchResults;
+    }
+
+    protected void gridSearchAdaBoost(int[] treeSizes, int[] nodeSizes) {
+        for (int treeSize : treeSizes) {
+            for (int nodeSize : nodeSizes) {
+                AdaBoost.Trainer trainer = new AdaBoost.Trainer(treeSize);
+                trainer.setMaxNodes(nodeSize);
+                HashMap<String, String> params = new HashMap<>();
+                params.put("nodeSize", String.valueOf(nodeSize));
+                params.put("treeSize", String.valueOf(treeSize));
+                addToCrossValidation(MLModelType.AdaBoost, (ClassifierTrainer<T>) trainer, params);
+            }
+        }
+    }
+
+    protected void gridSearchGradientBoostedTree(int[] treeSizes, int[] nodeSizes, double[] shrinkages) {
+        for (int treeSize : treeSizes) {
+            for (int nodeSize : nodeSizes) {
+                for (double shrinkage : shrinkages) {
+                    GradientTreeBoost.Trainer trainer = new GradientTreeBoost.Trainer(treeSize);
+                    trainer.setMaxNodes(nodeSize);
+                    trainer.setShrinkage(shrinkage);
+                    HashMap<String, String> params = new HashMap<>();
+                    params.put("treeSize", String.valueOf(treeSize));
+                    params.put("nodeSize", String.valueOf(nodeSize));
+                    params.put("shrinkage", String.valueOf(shrinkage));
+                    addToCrossValidation(MLModelType.GradientBoostedTree, (ClassifierTrainer<T>) trainer, params);
+                }
+            }
+        }
+    }
+
+    protected void gridSearchLogisticRegression(int[] lambdas) {
+        for (int lamda : lambdas) {
+            LogisticRegression.Trainer trainer = new LogisticRegression.Trainer();
+            trainer.setRegularizationFactor(lamda);
+            trainer.setMaxNumIteration(MAX_ITERATION);
+            HashMap<String, String> params = new HashMap<>();
+            params.put("lamda", String.valueOf(lamda));
+            addToCrossValidation(MLModelType.LogisticRegression, (ClassifierTrainer<T>) trainer, params);
+
+        }
+    }
+
+    protected void gridSearchModel(MLModelType model, double mean, int numberOfFeatures, Class<T> type) {
         final int[] treeSizes = {10, 100, 200};
         final int[] nodeSizes = {5, 10, 20};
 
@@ -198,53 +272,7 @@ public class GridSearch<T> {
 
     }
 
-    private void addToCrossValidation(MLModelType mlModelType, ClassifierTrainer<T> trainer, HashMap<String, String> params) {
-        _gridSearchResults.add(new GridSearchResult(params, trainer, mlModelType));
-    }
-
-    private void gridSearchAdaBoost(int[] treeSizes, int[] nodeSizes) {
-        for (int treeSize : treeSizes) {
-            for (int nodeSize : nodeSizes) {
-                AdaBoost.Trainer trainer = new AdaBoost.Trainer(treeSize);
-                trainer.setMaxNodes(nodeSize);
-                HashMap<String, String> params = new HashMap<>();
-                params.put("nodeSize", String.valueOf(nodeSize));
-                params.put("treeSize", String.valueOf(treeSize));
-                addToCrossValidation(MLModelType.AdaBoost, (ClassifierTrainer<T>) trainer, params);
-            }
-        }
-    }
-
-    private void gridSearchGradientBoostedTree(int[] treeSizes, int[] nodeSizes, double[] shrinkages) {
-        for (int treeSize : treeSizes) {
-            for (int nodeSize : nodeSizes) {
-                for (double shrinkage : shrinkages) {
-                    GradientTreeBoost.Trainer trainer = new GradientTreeBoost.Trainer(treeSize);
-                    trainer.setMaxNodes(nodeSize);
-                    trainer.setShrinkage(shrinkage);
-                    HashMap<String, String> params = new HashMap<>();
-                    params.put("treeSize", String.valueOf(treeSize));
-                    params.put("nodeSize", String.valueOf(nodeSize));
-                    params.put("shrinkage", String.valueOf(shrinkage));
-                    addToCrossValidation(MLModelType.GradientBoostedTree, (ClassifierTrainer<T>) trainer, params);
-                }
-            }
-        }
-    }
-
-    private void gridSearchLogisticRegression(int[] lambdas) {
-        for (int lamda : lambdas) {
-            LogisticRegression.Trainer trainer = new LogisticRegression.Trainer();
-            trainer.setRegularizationFactor(lamda);
-            trainer.setMaxNumIteration(MAX_ITERATION);
-            HashMap<String, String> params = new HashMap<>();
-            params.put("lamda", String.valueOf(lamda));
-            addToCrossValidation(MLModelType.LogisticRegression, (ClassifierTrainer<T>) trainer, params);
-
-        }
-    }
-
-    private void gridSearchRandomForest(int[] treeSizes, int[] nodeSizes, int numberOfFeatures) {
+    protected void gridSearchRandomForest(int[] treeSizes, int[] nodeSizes, int numberOfFeatures) {
         for (int treeSize : treeSizes) {
             for (int nodeSize : nodeSizes) {
                 RandomForest.Trainer trainer = new RandomForest.Trainer(treeSize);
@@ -261,7 +289,7 @@ public class GridSearch<T> {
     }
 
     @SafeVarargs
-    private final void gridSearchSVM(MLModelType mlModelType, List<Pair<Double, Double>> cs, MercerKernel<double[]>... kernels) {
+    protected final void gridSearchSVM(MLModelType mlModelType, List<Pair<Double, Double>> cs, MercerKernel<double[]>... kernels) {
         for (MercerKernel<double[]> mercerKernel : kernels) {
             for (Pair<Double, Double> c : cs) {
                 SVM.Trainer<double[]> trainer = new SVM.Trainer<>(mercerKernel, c.getLeft(), c.getRight());
@@ -276,7 +304,7 @@ public class GridSearch<T> {
 
     }
 
-    private void gridSearchSparseSVM(MLModelType mlModelType, List<Pair<Double, Double>> cs, MercerKernel<SparseArray>... kernels) {
+    protected void gridSearchSparseSVM(MLModelType mlModelType, List<Pair<Double, Double>> cs, MercerKernel<SparseArray>... kernels) {
         for (MercerKernel<SparseArray> mercerKernel : kernels) {
             for (Pair<Double, Double> c : cs) {
                 SVM.Trainer<SparseArray> trainer = new SVM.Trainer<>(mercerKernel, c.getLeft(), c.getRight());
@@ -290,28 +318,6 @@ public class GridSearch<T> {
         }
     }
 
-    public void printFeatureImportance(int[] labels, double[][] x, int topn, FeatureExtractor<?, T> featureExtractor) {
-        final int classes = IntStream.of(labels).distinct().toArray().length;
-        final double[] rank;
-        if (classes == 2) {
-            _log.info("Binary classification: feature importance (SNR)");
-            SignalNoiseRatio signalNoiseRatio = new SignalNoiseRatio();
-            rank = signalNoiseRatio.rank(x, labels);
-
-        } else {
-            _log.info("Multi-class classification: eature importance (SNR)");
-            SumSquaresRatio sumSquaresRatio = new SumSquaresRatio();
-            rank = sumSquaresRatio.rank(x, labels);
-
-        }
-        IntStream.range(0, rank.length).boxed()//
-                .collect(toMap(featureExtractor::getFeatureNameForIndex, i -> rank[i]))//
-                .entrySet().stream()//
-                .filter(e -> !e.getValue().isNaN()).sorted((o1, o2) -> Double.compare(Math.abs(o2.getValue()), Math.abs(o1.getValue()))).limit(topn)
-                .forEach(e -> _log.info("{}\t\t{}", e.getKey(), e.getValue()));
-    }
-
-
     // @formatter:off
     public enum MLModelType {
         SVM_Linear, SVM_Gaussian, SVM_Laplacian,
@@ -321,13 +327,13 @@ public class GridSearch<T> {
     }
     // @formatter:on
 
+
     public static class GridSearchResult {
 
         private final Map<String, String> params;
         private final ClassifierTrainer _classifierTrainer;
         private CVResult _cVresult;
         private MLModelType _mlModelType;
-
 
         public GridSearchResult(Map<String, String> params, ClassifierTrainer classifierTrainer, MLModelType mlModelType) {
             this.params = params;
