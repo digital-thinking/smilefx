@@ -59,7 +59,7 @@
                                 GridPane.rowIndex="1" GridPane.columnIndex="0"/>
                         <ProgressBar fx:id="sampleAndScaleProgress" progress="0.0" visible="false" GridPane.rowIndex="1"
                                      GridPane.columnIndex="1"/>
-                        <BarChart fx:id="classesBarChart" visible="false" GridPane.rowIndex="2"
+                        <BarChart fx:id="classesBarChart" visible="false" animated="false" GridPane.rowIndex="2"
                                   GridPane.columnIndex="0">
                             <xAxis>
                                 <CategoryAxis side="BOTTOM"/>
@@ -68,7 +68,7 @@
                                 <NumberAxis side="LEFT"/>
                             </yAxis>
                         </BarChart>
-                        <BarChart fx:id="corrBarChart" visible="false" GridPane.rowIndex="2" GridPane.columnIndex="1">
+                        <BarChart fx:id="corrBarChart" visible="false" animated="false" GridPane.rowIndex="2" GridPane.columnIndex="1">
                             <xAxis>
                                 <CategoryAxis side="BOTTOM"/>
                             </xAxis>

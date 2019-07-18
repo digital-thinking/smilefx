@@ -12,6 +12,7 @@ import smile.classification.*;
 import smile.feature.Scaler;
 import smile.feature.SignalNoiseRatio;
 import smile.feature.SumSquaresRatio;
+import smile.math.Math;
 import smile.math.SparseArray;
 import smile.math.kernel.*;
 import smile.validation.ClassificationMeasure;
@@ -275,7 +276,7 @@ public class GridSearch<T> {
     protected void gridSearchRandomForest(int[] treeSizes, int[] nodeSizes, int numberOfFeatures) {
         for (int treeSize : treeSizes) {
             for (int nodeSize : nodeSizes) {
-                RandomForest.Trainer trainer = new RandomForest.Trainer(treeSize);
+                RandomForest.Trainer trainer = new RandomForest.Trainer((int) Math.floor(Math.sqrt(numberOfFeatures)), treeSize);
                 trainer.setNodeSize(nodeSize);
                 trainer.setSplitRule(DecisionTree.SplitRule.GINI);
                 trainer.setNumRandomFeatures((int) Math.sqrt(numberOfFeatures));
@@ -293,7 +294,7 @@ public class GridSearch<T> {
         for (MercerKernel<double[]> mercerKernel : kernels) {
             for (Pair<Double, Double> c : cs) {
                 SVM.Trainer<double[]> trainer = new SVM.Trainer<>(mercerKernel, c.getLeft(), c.getRight());
-                trainer.setMaxIter(MAX_ITERATION);
+//                trainer.setMaxIter(MAX_ITERATION);
                 HashMap<String, String> params = new HashMap<>();
                 params.put("CP", String.valueOf(c.getLeft()));
                 params.put("CN", String.valueOf(c.getRight()));
@@ -308,7 +309,7 @@ public class GridSearch<T> {
         for (MercerKernel<SparseArray> mercerKernel : kernels) {
             for (Pair<Double, Double> c : cs) {
                 SVM.Trainer<SparseArray> trainer = new SVM.Trainer<>(mercerKernel, c.getLeft(), c.getRight());
-                trainer.setMaxIter(MAX_ITERATION);
+//                trainer.setMaxIter(MAX_ITERATION);
                 HashMap<String, String> params = new HashMap<>();
                 params.put("CP", String.valueOf(c.getLeft()));
                 params.put("CN", String.valueOf(c.getRight()));
