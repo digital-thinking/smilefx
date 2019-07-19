@@ -286,13 +286,12 @@ public abstract class AbstractController<T, R> {
             if (trainingDataSet.getFeatures() != null && trainingDataSet.getLabels() != null) {
                 verifyButton.setDisable(false);
             }
-            showImportances((double[]) currentModel.getImportancesIfAvailable().orElseGet(null));
+            showImportances((double[]) currentModel.getImportancesIfAvailable().orElse(null));
         }
 
     }
 
     public void resampleAndScale(ActionEvent actionEvent) {
-        sampleAndScaleButton.setDisable(true);
         exportButton.setDisable(true);
         sampleAndScaleProgress.setVisible(true);
         forkJoinPool.execute(() -> {
@@ -335,13 +334,13 @@ public abstract class AbstractController<T, R> {
                         .map(pair -> new XYChart.Data<>(pair.getKey(), (Number) pair.getValue())).collect(Collectors.toList());
 
                 Platform.runLater(() -> {
-                    corrBarChart.setTitle("Correlations");
+                    corrBarChart.setTitle("Correlation with label");
                     corrBarChart.getData().clear();
                     XYChart.Series<String, Number> series = new XYChart.Series<>();
                     series.getData().addAll(dataList);
-                    series.setName("Pearson Correlation");
                     corrBarChart.getData().add(series);
                     corrBarChart.setVisible(true);
+                    corrBarChart.setLegendVisible(false);
                 });
             }
 
@@ -367,7 +366,6 @@ public abstract class AbstractController<T, R> {
                 exportButton.setVisible(true);
                 exportButton.setDisable(false);
 
-                sampleAndScaleButton.setDisable(false);
             });
         });
 
@@ -396,6 +394,8 @@ public abstract class AbstractController<T, R> {
             Platform.runLater(() -> {
                 ((Button) actionEvent.getSource()).setDisable(false);
                 currentModelLabel.setText(String.valueOf(Paths.get(this.modelPath).getFileName()));
+                verifyModel(null);
+                accordion.getPanes().get(4).setExpanded(true);
                 verifyButton.setDisable(false);
             });
 
@@ -435,6 +435,7 @@ public abstract class AbstractController<T, R> {
 
     public void stopProcessing() {
         BalancedCrossValidation.stopAll();
+        trainingProgress.setProgress(0);
         gridSearchButton.setDisable(false);
     }
 

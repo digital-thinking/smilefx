@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.HBox?>
+<BorderPane xmlns:fx="http://javafx.com/fxml"
+            xmlns="http://javafx.com/javafx"
+            fx:controller="de.ixeption.smilefx.example.ErrorController"
+            prefHeight="400.0" prefWidth="600.0">
+    <center>
+        <ScrollPane>
+            <content>
+                <Label fx:id="errorMessage" wrapText="true"/>
+            </content>
+        </ScrollPane>
+    </center>
+    <bottom>
+        <HBox alignment="CENTER">
+            <Button text="OK" onAction="#close"/>
+        </HBox>
+    </bottom>
+
+</BorderPane>

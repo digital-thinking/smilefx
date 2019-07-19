@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
+<?import javafx.geometry.Insets?>
 <?import javafx.scene.chart.*?>
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
@@ -24,11 +25,11 @@
                             <Label fx:id="extractorInfo"/>
                             <Label fx:id="featureInfo"/>
                         </VBox>
-                        <Label text="limit" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                        <Label text="Limit" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
                         <TextField fx:id="limitData" GridPane.rowIndex="1" GridPane.columnIndex="1" text="-1"/>
-                        <Label text="samplingFactor for negatives" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                        <Label text="Downsampling for negatives" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
                         <TextField fx:id="samplingFactor" text="1.0" GridPane.rowIndex="2" GridPane.columnIndex="1"/>
-                        <Button fx:id="fetchButton" onAction="#fetchData" text="Fetch data " GridPane.rowIndex="3"
+                        <Button fx:id="fetchButton" onAction="#fetchData" text="Load Data " GridPane.rowIndex="3"
                                 GridPane.columnIndex="0"/>
                         <ProgressBar fx:id="fetchProgress" progress="0.0" visible="false" GridPane.rowIndex="3"
                                      GridPane.columnIndex="1"/>
@@ -41,25 +42,25 @@
                 <AnchorPane>
                     <GridPane alignment="center" hgap="10" vgap="10">
                         <VBox GridPane.rowIndex="0" GridPane.columnIndex="0">
-                            <Label text="pca Dimensions"/>
-                            <TextField fx:id="pcaDimensions" text="10"/>
-                        </VBox>
-                        <VBox GridPane.rowIndex="0" GridPane.columnIndex="1">
                             <CheckBox fx:id="scaleCheckbox" text="scale"/>
                             <CheckBox fx:id="standardizeCheckbox" text="standardize"/>
+                        </VBox>
+                        <VBox GridPane.rowIndex="0" GridPane.columnIndex="1">
                             <CheckBox fx:id="ppcaCheckBox" text="ppca"/>
                             <CheckBox fx:id="ghaCheckBox" text="gha"/>
+                            <Label text="Dimensions"/>
+                            <TextField fx:id="pcaDimensions" text="10"/>
                         </VBox>
                         <VBox GridPane.rowIndex="0" GridPane.columnIndex="2">
                             <CheckBox fx:id="linearkpca" text="Linear Kernel PCA"/>
                             <CheckBox fx:id="gausskpca" text="Gaussian Kernel PCA"/>
                             <CheckBox fx:id="htangentkpca" text="Hyperbolic Tangent Kernel PCA"/>
                         </VBox>
-                        <Button fx:id="sampleAndScaleButton" onAction="#resampleAndScale" text="TransformData "
+                        <Button fx:id="sampleAndScaleButton" onAction="#resampleAndScale" text="Apply preprocessing "
                                 GridPane.rowIndex="1" GridPane.columnIndex="0"/>
                         <ProgressBar fx:id="sampleAndScaleProgress" progress="0.0" visible="false" GridPane.rowIndex="1"
                                      GridPane.columnIndex="1"/>
-                        <BarChart fx:id="classesBarChart" visible="false" animated="false" GridPane.rowIndex="2"
+                        <BarChart animated="false" fx:id="classesBarChart" visible="false" GridPane.rowIndex="2"
                                   GridPane.columnIndex="0">
                             <xAxis>
                                 <CategoryAxis side="BOTTOM"/>
@@ -68,7 +69,8 @@
                                 <NumberAxis side="LEFT"/>
                             </yAxis>
                         </BarChart>
-                        <BarChart fx:id="corrBarChart" visible="false" animated="false" GridPane.rowIndex="2" GridPane.columnIndex="1">
+                        <BarChart animated="false" fx:id="corrBarChart" visible="false" GridPane.rowIndex="2"
+                                  GridPane.columnIndex="1">
                             <xAxis>
                                 <CategoryAxis side="BOTTOM"/>
                             </xAxis>
@@ -77,12 +79,12 @@
                             </yAxis>
                         </BarChart>
                         <Button fx:id="exportButton" visible="false" GridPane.rowIndex="3" GridPane.columnIndex="0"
-                                text="exportDataToCSV" onAction="#exportToCSV"/>
+                                text="Export Preprocessed Data" onAction="#exportToCSV"/>
                     </GridPane>
                 </AnchorPane>
             </TitledPane>
 
-            <TitledPane animated="false" text="Training" disable="true">
+            <TitledPane animated="false" text="Grid Search" disable="true">
                 <AnchorPane>
                     <GridPane alignment="center" hgap="10" vgap="10">
                         <VBox GridPane.rowIndex="0" GridPane.columnIndex="0">
@@ -100,17 +102,21 @@
                             <TextField fx:id="kFolds" text="10"/>
                         </VBox>
                         <VBox GridPane.rowIndex="0" GridPane.columnIndex="1">
-                            <Button fx:id="gridSearchButton" onAction="#gridSearch" text="Grid Search!"
+                            <GridPane.margin>
+                                <Insets bottom="100"/>
+                            </GridPane.margin>
+                            <Button fx:id="gridSearchButton" onAction="#gridSearch" text="Start Grid Search CV"
                                     GridPane.rowIndex="0" GridPane.columnIndex="1"/>
                             <ProgressBar fx:id="trainingProgress" progress="0.0" visible="false" GridPane.rowIndex="0"
                                          GridPane.columnIndex="2"/>
-                            <Button text="Stop Training" onAction="#stopProcessing" GridPane.rowIndex="0"
+                            <Label text="Caution: stops current Training!"/>
+                            <Button text="Force Terminate!" onAction="#stopProcessing" GridPane.rowIndex="0"
                                     GridPane.columnIndex="3"/>
                         </VBox>
                     </GridPane>
                 </AnchorPane>
             </TitledPane>
-            <TitledPane text="Visualize" disable="true">
+            <TitledPane text="Model Selection" disable="true">
                 <AnchorPane>
                     <GridPane>
                         <TableView fx:id="resultRecordTable" AnchorPane.bottomAnchor="0.0" AnchorPane.topAnchor="0.0"
@@ -148,22 +154,22 @@
                             </TableView>
                         </VBox>
                         <VBox GridPane.rowIndex="1" GridPane.columnIndex="0">
-                            <Button text="Train Model" onAction="#saveModel"/>
+                            <Button text="Select/Train" onAction="#saveModel"/>
                         </VBox>
                     </GridPane>
                 </AnchorPane>
             </TitledPane>
-            <TitledPane text="Validate">
+            <TitledPane text="Validation">
                 <AnchorPane>
                     <GridPane hgap="10" vgap="10" prefHeight="600.0" prefWidth="1200.0">
                         <VBox GridPane.rowIndex="0" GridPane.columnIndex="0" prefWidth="400">
-                            <Button fx:id="loadModelButton" text="load model" onAction="#openModel"/>
+                            <Button fx:id="loadModelButton" text="Load Model" onAction="#openModel"/>
                             <Label fx:id="currentModelLabel" text="No model loaded"/>
                             <Label fx:id="noDataLabel" text="No Data!" visible="false"/>
                         </VBox>
                         <VBox GridPane.rowIndex="0" GridPane.columnIndex="1" prefWidth="400">
-                            <Button fx:id="verifyButton" text="verify" onAction="#verifyModel"/>
-                            <Button fx:id="updateThreshold" text="updateThreshold" onAction="#updateThreshold"/>
+                            <Button fx:id="verifyButton" text="Validate!" onAction="#verifyModel"/>
+                            <Button fx:id="updateThreshold" text="Update Threshold" onAction="#updateThreshold"/>
                         </VBox>
                         <LineChart fx:id="finalROC" visible="false" GridPane.rowIndex="1" GridPane.columnIndex="0"
                                    animated="false" prefWidth="400" prefHeight="400">

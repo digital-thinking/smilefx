@@ -14,10 +14,9 @@ import smile.validation.ConfusionMatrix;
 import smile.validation.CrossValidation;
 
 import javax.annotation.Nullable;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ForkJoinTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -26,7 +25,8 @@ import java.util.function.Consumer;
 public class BalancedCrossValidation {
 
     private static final Logger _log = LoggerFactory.getLogger(BalancedCrossValidation.class);
-    private static ForkJoinPool THREAD_POOL;
+    private static volatile boolean SHUTDOWN = false;
+    private static List<ForkJoinTask<?>> CURRENT_TASKS = new ArrayList<>();
 
     /**
      * balanced Cross validation of a classification model.
@@ -41,8 +41,9 @@ public class BalancedCrossValidation {
      * @return {@link CVResult} the test results as a Map
      */
 
-    public static <T> Map<ClassifierTrainer<T>, CVResult> bcv(int k, T[] x, int[] y, ClassificationMeasure[] measures, int parallelism,
-                                                              @Nullable Consumer<Double> progressCallback, boolean resampling, ClassifierTrainer<T>... trainers) {
+    public synchronized static <T> Map<ClassifierTrainer<T>, CVResult> bcv(int k, T[] x, int[] y, ClassificationMeasure[] measures, int parallelism,
+                                                                           @Nullable Consumer<Double> progressCallback, boolean resampling, ClassifierTrainer<T>... trainers) {
+        SHUTDOWN = false;
         if (k < 2) {
             throw new IllegalArgumentException("Invalid k for k-fold cross validation: " + k);
         }
@@ -72,12 +73,15 @@ public class BalancedCrossValidation {
                 trainy = Math.slice(y, cv.train[i]);
             }
 
-            THREAD_POOL = new ForkJoinPool(parallelism);
+            if (SHUTDOWN) {
+                return null;
+            }
+            ForkJoinPool forkJoinPool = new ForkJoinPool(parallelism);
             for (int j = 0; j < trainers.length; j++) {
                 ClassifierTrainer<T> t = trainers[j];
                 int finalI = i;
                 int finalJ = j;
-                THREAD_POOL.execute(() -> {
+                CURRENT_TASKS.add(forkJoinPool.submit(() -> {
                     Classifier<T> classifier = t.train(trainx, trainy);
                     if (classifier instanceof SVM) {
                         ((SVM<T>) classifier).trainPlattScaling(trainx, trainy);
@@ -97,12 +101,12 @@ public class BalancedCrossValidation {
                             predictions[finalJ][v] = classifier.predict(x[v]);
                         }
                     }
-                });
-
+                }));
             }
+
             try {
-                THREAD_POOL.shutdown();
-                THREAD_POOL.awaitTermination(1, TimeUnit.HOURS);
+                forkJoinPool.shutdown();
+                forkJoinPool.awaitTermination(12, TimeUnit.HOURS);
             } catch (InterruptedException e) {
                 _log.info("Error", e);
             }
@@ -126,9 +130,10 @@ public class BalancedCrossValidation {
     }
 
     public static void stopAll() {
-        if (THREAD_POOL != null) {
-            THREAD_POOL.shutdownNow();
-        }
+        SHUTDOWN = true;
+        CURRENT_TASKS.forEach(forkJoinTask -> forkJoinTask.cancel(true));
+        CURRENT_TASKS.forEach(forkJoinTask -> forkJoinTask.completeExceptionally(new InterruptedException("Aborted")));
+
     }
 
 }
