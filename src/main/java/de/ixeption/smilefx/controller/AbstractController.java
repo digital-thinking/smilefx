@@ -123,6 +123,15 @@ public abstract class AbstractController<T, R> {
     private TrainingDataSet<R> validationData;
     private TrainingDataSet<R> trainingDataSet;
 
+    private static boolean isAllEqual(double[] a) {
+        for (int i = 1; i < a.length; i++) {
+            if (a[0] != a[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public void exportToCSV() {
 
         FileChooser fileChooser = new FileChooser();
@@ -456,7 +465,6 @@ public abstract class AbstractController<T, R> {
             try {
                 validationData = getValidationData();
             } catch (Exception e) {
-                System.err.println(e);
                 noDataLabel.setText(e.getMessage());
             }
         }
@@ -468,8 +476,9 @@ public abstract class AbstractController<T, R> {
             noDataLabel.setVisible(false);
             forkJoinPool.execute(() -> {
                 double[] preds = new double[validationData.getLabels().length];
-                for (int i = 0; i < validationData.getFeatures().length; i++) {
-                    preds[i] = currentModel.predict(validationData.getRawFeatures()[i]).getPosteriori()[1];
+                R[] features = validationData.getRawFeatures();
+                for (int i = 0; i < features.length; i++) {
+                    preds[i] = currentModel.predict(features[i]).getPosteriori()[1];
                 }
                 RocCurve rocCurve = new RocCurve(validationData.getLabels(), preds);
                 PrecisionRecallCurve prcCurve = new PrecisionRecallCurve(validationData.getLabels(), preds);
@@ -584,7 +593,6 @@ public abstract class AbstractController<T, R> {
 
     }
 
-
     private void showBinary(double[] xPos, double[] xNeg) {
         Axis<String> xAxis = new CategoryAxis();
         Axis<Number> yAxis = new NumberAxis();
@@ -609,6 +617,11 @@ public abstract class AbstractController<T, R> {
     }
 
     private void showContinuous(double[] xPos, double[] xNeg, DescriptiveStatistics statisticsPos, DescriptiveStatistics statisticsNeg) {
+
+        if (isAllEqual(xPos) || isAllEqual(xNeg)) {
+            return;
+        }
+
         Axis<String> xAxis = new CategoryAxis();
         Axis<Number> yAxis = new NumberAxis();
         AreaChart<String, Number> areaChart = new AreaChart<>(xAxis, yAxis);
